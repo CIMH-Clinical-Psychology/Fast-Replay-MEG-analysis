@@ -26,9 +26,9 @@ from mne_bids import BIDSPath
 # %%
 # General Settings
 
-bids_root: PathLike | None = 'z:/FastReplay-MEG-bids/'
-deriv_root: PathLike = f"{bids_root}/derivatives/"  # Save all processed data under /derivatives/
-subjects_dir: Optional[PathLike] = f"{deriv_root}/freesurfer/subjects/"  # Path to FreeSurfer subject reconstructions
+# bids_root: PathLike | None = 'z:/FastReplay-MEG-bids/'
+# deriv_root: PathLike = f"{bids_root}/derivatives/"  # Save all processed data under /derivatives/
+# subjects_dir: Optional[PathLike] = f"{deriv_root}/freesurfer/subjects/"  # Path to FreeSurfer subject reconstructions
 interactive: bool = False  # Disable interactive elements
 # sessions: Literal["all"] = "all"  # Process all sessions
 # task: str = ""  # Process all tasks by leaving empty
@@ -36,7 +36,7 @@ task_is_rest: bool = True  # Treat data as resting-state, disable epoching
 # runs: Literal["all"] = "all"  # Process all runs
 exclude_runs: Optional[dict[str, list[str]]] = None  # No excluded runs
 subjects: Sequence[str] | Literal["all"] = "all"  # Analyze all subjects
-exclude_subjects: Sequence[str] = ['23']  # No excluded subjects
+# exclude_subjects: Sequence[str] = ['23']  # No excluded subjects
 process_empty_room: bool = True  # Preprocess empty-room data
 process_rest: bool = True  # Preprocess resting-state data
 ch_types: Sequence[Literal["meg"]] = ["meg"]  # Include MEG and EEG channels
@@ -50,7 +50,6 @@ rest_epochs_duration = 2
 rest_epochs_overlap = 0
 epochs_tmin = 0
 # on_error  = 'continue'
-exclude_subjects: Sequence[str] = ['01', '23']
 baseline = None
 # %%
 # Preprocessing
