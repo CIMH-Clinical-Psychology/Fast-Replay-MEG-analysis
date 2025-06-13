@@ -35,11 +35,9 @@ if username == 'simon.kern' and host=='zislrds0035.zi.local':  # simons VM
 
 elif username == 'simon.kern' and host=='5cd320lfh8':
     cache_dir = f'{home}/Desktop/joblib-fasterplay/'
-    bids_dir = "W:/group_klips/data/data/Simon/fastreplay/Fast-Replay-MEG-bids/"
+    bids_dir = "W:/group_klips/data/data/Simon/highspeed/highspeed-MEG-bids/"
+    plot_dir = f'{home}/Nextcloud/ZI/2024.10 FastReplayAnalysis/plots/'
 
-elif username == 'simon' and host in ('thinkpad-simon', 'desktop-dakomj2'):
-    cache_dir = 'z:/joblib-fastreplay/'
-    bids_dir = "z:/fastreplay-MEG-bids/"
 else:
     warnings.warn('No user specific settings found in settings.py')
 

@@ -186,7 +186,15 @@ sns.despine()
 
 ax.hlines(0.2, -200, 2000, linestyle='--', color='gray')
 
+#%% plot accuracy curves
 
+df_proba = pd.DataFrame()
+
+for i, subject in enumerate(tqdm(layout.subjects, desc='training classifier')):
+    # first calculate the peak decoding timepoint for this participant
+    # load data
+    data_x, data_y, _ = load_localizer(subject=subject, verbose=False)
+    asd
 #%% create GIF of classifiers
 import imageio
 from joblib import Parallel, delayed
