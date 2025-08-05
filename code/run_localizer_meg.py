@@ -3,6 +3,8 @@
 """
 Created on Tue Nov 19 09:38:18 2024
 
+run localizer cross validation of decoding accuracy on MEG data.
+
 @author: simon.kern
 """
 import mne
@@ -22,20 +24,20 @@ import joblib
 
 #%% Settings
 tmin = -0.2
-tmax = 1
+tmax = 0.8
 ex_per_fold = 8
 best_C = 4.640625  # previously computed
 tsel = 'best'  # either take the best individually timepoint or the mean peak across participants
 pkl_localizer_Cs = settings.cache_dir + '/localizer_cs.pkl.gz'
 
 # for subj in ['01', '23', '03', '04', '09', '13', '26']:
-for subj in ['01', '03', '04', '09', '13', '23', '26']:
+# for subj in ['01', '03', '04', '09', '13', '23', '26', 'emptyroom']:
     # somehow, these give errors when loading, so leave them out for now
     # should be included in the final calculation
     # if you see this in a PR, please let me knowm ;-)
-    if subj in layout.subjects:
-        layout.subjects.remove(subj)
-
+    # if subj in layout.subjects:
+        # layout.subjects.remove(subj)
+#
 stop
 #%% Calculate the best regularization parameter
 
@@ -128,9 +130,9 @@ for i, subject in enumerate(tqdm(layout.subjects, desc='training classifier')):
         label = ['other']*5
         label[y] = 'target'
         df_tmp = pd.DataFrame({'label': np.hstack([label]* probas.shape[1]),
-                                      'timepoint': timepoint,
-                                      'proba': proba.ravel(),
-                                      'stimulus': settings.img_trigger[y]})
+                               'timepoint': timepoint,
+                               'proba': proba.ravel(),
+                               'stimulus': settings.img_trigger[y]})
         df_proba_subj = pd.concat([df_proba_subj, df_tmp], ignore_index=True)
 
     df_proba_subj = df_proba_subj.groupby(['label', 'timepoint', 'stimulus']).mean().reset_index()
@@ -172,6 +174,7 @@ fig.savefig(settings.plot_dir + f'localizer_perclass.png')
 
 df = df_all[df_all.C==best_C]
 
+
 fix, ax = plt.subplots(1, 1, figsize=[8, 6])
 
 
@@ -189,12 +192,32 @@ ax.hlines(0.2, -200, 2000, linestyle='--', color='gray')
 #%% plot accuracy curves
 
 df_proba = pd.DataFrame()
+clf = LogisticRegression(penalty='l1', C=5, solver='liblinear')
+
+df = pd.DataFrame()
 
 for i, subject in enumerate(tqdm(layout.subjects, desc='training classifier')):
     # first calculate the peak decoding timepoint for this participant
     # load data
     data_x, data_y, _ = load_localizer(subject=subject, verbose=False)
-    asd
+    df_subj = cross_validation_across_time(data_x, data_y, clf=clf)
+    df_subj = df_subj.groupby('timepoint').mean(True).reset_index()
+    df = pd.concat([df, df_subj], ignore_index=True)
+    break
+
+plt.rcParams.update({'font.size':14})
+fig, ax = plt.subplots(1, 1, figsize=[4, 3])
+sns.lineplot(df, x='timepoint', y='accuracy', ax=ax)
+ax.hlines(0.2, -100, 500, color='black', alpha=0.5, linestyle='--')
+ax.set_ylim(0, 0.8)
+ax.set_xticks([-100, 0, 100, 200, 300, 400, 500])
+ax.legend(['decoding acc.', 'SE', 'chance level'], fontsize=10, loc='upper left')
+ax.set_xlabel('ms after stim onset')
+sns.despine()
+plt.pause(0.1)
+plt.tight_layout()
+
+
 #%% create GIF of classifiers
 import imageio
 from joblib import Parallel, delayed

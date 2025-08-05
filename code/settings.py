@@ -13,6 +13,9 @@ import sys
 import warnings
 import getpass
 import platform
+import time
+import psutil
+import logging
 from bids import BIDSLayout  # pip install pybids
 
 ###############################
@@ -23,39 +26,87 @@ username = getpass.getuser().lower()  # your login name
 host     = platform.node().lower()    # the name of this computer
 system   = platform.system().lower()  # linux, windows or mac.
 home = os.path.expanduser('~')
+cwd = os.path.abspath(os.getcwd())
 
-# overwrite this variable to set a custom data dir
-bids_dir = "../data/"  # enter directory here where the data has been stored
+
+# the following directories are needed:
+# cache_dir - temporary directory for caching and joblib
+# plot_dir  - where plots will be dumped
+# bids_dir_meg - directory of the MEG bids data
+# bids_dir_3T  - https://gin.g-node.org/lnnrtwttkhn/highspeed-bids
+# bids_dir_3T_decoding - https://gin.g-node.org/lnnrtwttkhn/highspeed-decoding
 
 # machine specific configuration overwrites general directory structure
 if username == 'simon.kern' and host=='zislrds0035.zi.local':  # simons VM
     cache_dir = '/data/fastreplay/cache/'
-    bids_dir = '/data/fastreplay/Fast-Replay-MEG-bids/'
-    plot_dir = f'{home}/Nextcloud/ZI/2024.10 FastReplayAnalysis/plots/'
+    plot_dir = '../plots/'
+    bids_dir_meg = '/zi/flstorage/group_klips/data/data/Simon/highspeed/highspeed-MEG-bids/'
+    bids_dir_3T = '/zi/flstorage/group_klips/data/data/Simon/highspeed/highspeed-3T-bids/'
+    bids_dir_3T_decoding = '/zi/flstorage/group_klips/data/data/Simon/highspeed/highspeed-3T-decoding/'
 
 elif username == 'simon.kern' and host=='5cd320lfh8':
     cache_dir = f'{home}/Desktop/joblib-fasterplay/'
-    bids_dir = "W:/group_klips/data/data/Simon/highspeed/highspeed-MEG-bids/"
-    plot_dir = f'{home}/Nextcloud/ZI/2024.10 FastReplayAnalysis/plots/'
+    plot_dir = '../plots/'
+    bids_dir_meg = "W:/group_klips/data/data/Simon/highspeed/highspeed-MEG-bids"
+    bids_dir_3T = 'W:/group_klips/data/data/Simon/highspeed/highspeed-3T-bids/'
+    bids_dir_3T_decoding = 'w:/group_klips/data/data/Simon/highspeed/highspeed-3T-decoding/'
+
+elif username=='simon' and host=='kubuntu':
+    cache_dir = f'{home}/Desktop/joblib-fasterplay/'
+    plot_dir = '../plots/'
+    # bids_dir_meg = "W:/group_klips/data/data/Simon/highspeed/highspeed-MEG-bids/"
+    bids_dir_3T = bids_dir = '/home/simon/Desktop/highspeed-bids/'
+    bids_dir_3T_decoding = '/home/simon/Desktop/highspeed-decoding/'
 
 else:
-    warnings.warn('No user specific settings found in settings.py')
+    raise Exception('No user specific settings found in settings.py')
 
 #####################################
 # END OF USER-SPECIFIC CONFIGURATION
 #####################################
 
-#%% initializations, should need no change
-# set environment variable for `meg_utils`, where to cache function calls
-os.environ['JOBLIB_CACHE_DIR'] = cache_dir
+#%% convert to abspaths
+
+cache_dir = os.path.abspath(cache_dir)
+plot_dir = os.path.abspath(plot_dir)
+bids_dir_3T_decoding = os.path.abspath(bids_dir_3T_decoding)
 
 #%% initialize BIDS dir
-layout = BIDSLayout(bids_dir, derivatives=True)
-layout.subjects = layout.get_subjects()
-if not layout.subjects:
-        warnings.warn('No subjects in layout, are you sure it exists?')
+if 'bids_dir_meg' in locals():
+    bids_dir_meg = os.path.abspath(bids_dir_meg)
+    # use database for faster loading. but recreate on each python startup
+    db_path = cache_dir + '/bids_meg.db'
+    python_start = psutil.Process(os.getpid()).create_time()
+    reset_database = (os.path.getmtime(db_path) if os.path.exists(db_path) else 0) < python_start
+    if reset_database:
+        warnings.warn('resetting MEG BIDS database')
+    layout_MEG = BIDSLayout(bids_dir_meg, derivatives=True, database_path=db_path, reset_database=reset_database)
+    layout_MEG.subjects = layout_MEG.get_subjects()
+    if not layout_MEG.subjects:
+        warnings.warn('No subjects in layout_MEG, are you sure it exists?')
+else:
+    layout_MEG = None
+    warnings.warn('bids_dir_MEG has not been defined in settings.py')
+
+#%% BIDS layout for 3T
+if 'bids_dir_3T' in locals():
+    bids_dir_3T = os.path.abspath(bids_dir_3T)
+    # use database for faster loading. but recreate on each python startup
+    db_path = cache_dir + '/bids_3T.db'
+    python_start = psutil.Process(os.getpid()).create_time()
+    reset_database = (os.path.getmtime(db_path) if os.path.exists(db_path) else 0) < python_start
+    if reset_database:
+        warnings.warn('resetting 3T BIDS database')
+    layout_3T = BIDSLayout(bids_dir_3T, database_path=db_path, reset_database=reset_database)
+    layout_3T.subjects = layout_3T.get_subjects()
+    if not layout_3T.subjects:
+        warnings.warn('No subjects in layout_3T, are you sure it exists?')
+else:
+    layout_3T = None
+    warnings.warn('bids_dir_3T has not been defined in settings.py')
 
 #%% checks for stuff
+
 if 'cache_dir' not in locals():
     cache_dir = f"{bids_dir}/cache/"  # used for caching
 if 'plot_dir' not in locals():
@@ -81,6 +132,10 @@ def get_free_space_gb(path):
 if get_free_space_gb(cache_dir) < 20:
     raise RuntimeError(f"Free space for {cache_dir} is below 20GB. Cannot safely run.")
 
+#%% initializations, should need no change
+# set environment variable for `meg_utils`, where to cache function calls
+os.environ['JOBLIB_CACHE_DIR'] = cache_dir
+
 #%% constants
 img_trigger = {}  # here, offset of 1 is already removed!
 img_trigger[0] = 'Gesicht'
@@ -88,6 +143,8 @@ img_trigger[1]   = 'Haus'
 img_trigger[2]   = 'Katze'
 img_trigger[3]   = 'Schuh'
 img_trigger[4]   = 'Stuhl'
+
+categories = ['face', 'house', 'cat', 'shoe', 'chair']
 
 trigger_img = {}
 trigger_img['Gesicht'] = 1
@@ -113,3 +170,20 @@ trigger_base_val_localizer = 0
 trigger_base_val_localizer_distractor = 100
 trigger_base_val_cue = 10
 trigger_base_val_sequence = 20
+
+
+palette_wittkuhn1 = [
+    "#f5191c",  # soft red
+    "#e78f0a",  # soft orange
+    "#eacb2b",  # soft yellow
+    "#7cba96",  # soft green
+    "#3b99b1"   # soft blue
+]
+
+palette_wittkuhn2 = [
+    "#00204d",  # muted blue
+    "#414d6b",  # light blue-gray
+    "#7b7b7b",  # medium gray
+    "#bcaf6f",  # beige
+    "#ffea46",  # pale yellow
+]

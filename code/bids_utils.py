@@ -14,7 +14,7 @@ import joblib
 import numpy as np
 import pandas as pd
 import settings
-from settings import layout
+from settings import layout_MEG, layout_3T
 from meg_utils.pipeline import DataPipeline, LoadRawStep, EpochingStep
 from meg_utils.pipeline import ResampleStep, NormalizationStep, CustomStep
 from meg_utils.pipeline import ToArrayStep, StratifyStep
@@ -24,7 +24,7 @@ from meg_utils.preprocessing import rescale_meg_transform_outlier
 mem = joblib.Memory(settings.cache_dir)
 
 def load_latest_classifier(subject):
-    clfs = layout.get(subject=subject, suffix='clf', extension='pkl.gz')
+    clfs = layout_MEG.get(subject=subject, suffix='clf', extension='pkl.gz')
     clfs = [clf for clf in clfs if 'latest_clf' in clf.filename]
     assert len(clfs)==1, f'{len(clfs)=} classifier found for {subject=}'
     clf = joblib.load(clfs[0])
@@ -39,7 +39,7 @@ def make_bids_fname(filename, scope='derivatives', subject='group',
 
     # Define a template for the filename
     # This template should be adjusted based on the specific BIDS structure you are using
-    folder = f'{layout.root}/{scope}/{subject}/{modality}/'
+    folder = f'{layout_MEG.root}/{scope}/{subject}/{modality}/'
     os.makedirs(folder, exist_ok=True)
 
     # Add additional entities to the template
@@ -111,7 +111,7 @@ def load_behaviour(subject, **filters):
     >>> df = load_behaviour(subject='01', task='main', run=1)
     >>> print(df.head())
     """
-    beh_tsv = layout.get(subject=subject, return_type='filenames', datatype='beh',
+    beh_tsv = layout_MEG.get(subject=subject, return_type='filenames', datatype='beh',
                          extension='tsv')
     assert len(beh_tsv)==1, \
          f'[sub-{subject}] {len(beh_tsv)=} more or less than 1, did preprocessing run?'
@@ -123,16 +123,146 @@ def load_behaviour(subject, **filters):
     # apply filter on columns
     for filt in filters:
         assert filt in df_beh.columns, f'{filt=} not in {df_beh.columns=}'
-        df_beh = df_beh[df_beh[filt]==filters[filt]]
-        assert len(df_beh)>0, f'{filt=}={filters["filt"]} did not match any fields'
+        filter_val = filters[filt]
+        if isinstance(filter_val, list):
+            df_beh = df_beh[df_beh[filt].isin(filter_val)]
+        else:
+            df_beh = df_beh[df_beh[filt]==filter_val]
+        assert len(df_beh)>0, f'{filt=}={filter_val} did not match any fields'
     return df_beh
+
+
+@mem.cache
+def load_decoding_3T(subject, **filters):
+    """
+    Load and filter a behavioral BIDS file for a given subject.
+
+    This function retrieves a behavioral data file in BIDS format for a specified subject,
+    loads it into a pandas DataFrame, and applies column-based filters to the data.
+
+    these column are known
+    'pred_label', 'stim', 'tr', 'seq_tr', 'stim_tr', 'trial', 'run_study',
+           'session', 'tITI', 'id', 'test_set', 'classifier', 'mask', 'class',
+           'probability'
+
+    Parameters
+    ----------
+    subject : str or int
+        The subject identifier used to locate the behavioral data file.
+    **filters : dict
+        Key-value pairs where the key is the column name in the DataFrame and the value
+        is the criterion used to filter the DataFrame. Each filter is applied sequentially.
+
+    Returns
+    -------
+    pandas.DataFrame
+        A DataFrame containing the filtered behavioral data.
+    """
+    filename = f'{settings.bids_dir_3T_decoding}/decoding/sub-{subject}/data/sub-{subject}_decoding.csv'
+    df_proba = pd.read_csv(filename, low_memory=False)
+
+    # apply filter on columns
+    for filt in filters:
+        assert filt in df_proba.columns, f'{filt=} not in {df_proba.columns=}'
+        if isinstance(filters[filt], list):
+            df_proba = df_proba[df_proba[filt].isin(filters[filt])]
+        else:
+            df_proba = df_proba[df_proba[filt]==filters[filt]]
+
+        assert len(df_proba), f'{filt=}={filters[filt]} did not match any fields'
+    df_proba = df_proba.apply(pd.to_numeric, errors='ignore').convert_dtypes()
+    return df_proba
+
+
+def load_decoding_seq_3T(subject, classifier=settings.categories,
+                         mask='cv', test_set='test-seq_long', **filters):
+    """load the probability estimates of the sequence trials, wall-time aligned TR onsets"""
+    if 'seq' in test_set:
+        condition='sequence'
+    elif 'odd' in test_set:
+        condition='oddball'
+    elif 'rep' in test_set:
+        condition='repetition'
+    else:
+        raise Exception(f'unkonwn test set: {test_set}')
+    df_proba = load_decoding_3T(subject,
+                                test_set=test_set,
+                                mask=mask,
+                                classifier=classifier,
+                                **filters)
+    # df_proba = df_proba[df_proba['class'].isin(classifier)]
+    # apparently there were 530 TRs for each run.
+    # to get the exact number of TR per trial, reverse the calculation
+    df_proba['run_tr'] = df_proba.tr - (df_proba.run_study-1)*530
+    df_proba['run_tr_onset'] =  df_proba['run_tr'] * 1.25
+
+    df_seq = load_trial_data_3T(subject, condition=condition)
+    df_proba  = (
+        df_proba
+        .merge(df_seq[['trial', 'run_study', 'seq_onset']], on=['trial', 'run_study'], how='left')
+    )
+    df_proba['tr_onset'] = df_proba.run_tr_onset - df_proba.seq_onset
+
+    with warnings.catch_warnings():
+        # Tell Python to ignore *only* FutureWarning-class messages
+        warnings.simplefilter(action="ignore", category=FutureWarning)
+        df_proba = df_proba.apply(pd.to_numeric, errors='ignore').convert_dtypes()
+
+    return df_proba
+
+
+@mem.cache
+def load_events_3T(subject, **filters):
+    """load the task data of the 3T dataset"""
+    events_tsv = layout_3T.get(subject=subject, return_type='filenames', datatype='func',
+                         extension='tsv', suffix='events')
+    assert len(events_tsv)==8, \
+         f'[sub-{subject}] {len(events_tsv)=} more or less than 8'
+    df_events = pd.concat([ pd.read_csv(f, delimiter='\t') for f in events_tsv], ignore_index=True)
+    # apply filter on columns
+    for filt in filters:
+        assert filt in df_events.columns, f'{filt=} not in {df_events.columns=}'
+        filter_val = filters[filt]
+        if isinstance(filter_val, list):
+            df_events = df_events[df_events[filt].isin(filter_val)]
+        else:
+            df_events = df_events[df_events[filt]==filter_val]
+        assert len(df_events)>0, f'{filt=}={filter_val} did not match any fields'
+    df_events = df_events.apply(pd.to_numeric, errors='ignore').convert_dtypes()
+    return df_events
+
+
+@mem.cache
+def load_trial_data_3T(subject, condition='sequence'):
+    """load the sequence or oddball data per trial"""
+    df_events = load_events_3T(subject, condition=condition, trial_type='stimulus')
+
+    seqs = []
+    for trial, df in df_events.groupby('trial'):
+        seqs += [{'seq_onset': df.iloc[0].onset,
+                  'trial': df.trial.iloc[0],
+                  'session': df.session.iloc[0],
+                  'tITI': str(df.interval_time.iloc[0]),
+                  'run_session': df.run_session.iloc[0],
+                  'run_study': df.run_study.iloc[0],
+                  'serial_position': df.serial_position.values,
+                  'stim_index': df.stim_index.values,
+                  'stim_label': df.stim_label.values,
+
+                  }]
+    df_seq = pd.concat([pd.Series(seq) for seq in seqs], axis=1).transpose()
+    df_seq = df_seq.apply(pd.to_numeric, errors='ignore').convert_dtypes()
+    return df_seq
+
+
+
 
 @mem.cache
 def load_fast_sequences(subject, intervals=[32, 64, 128, 512], sfreq=100,
                        tmin=3.1, tmax=3+(0.512+0.1)*5, verbose=False):
     """loads the fast sequences as one go, starting 3.1s after the text cue,
     i.e. 200ms before the first seq stimulus, ranging to maximum of sequences"""
-    main_files = layout.get(subject=subject, suffix='raw',
+    main_files = layout_MEG.get(subject=subject, suffix='raw',
                             scope='derivatives', proc='clean',
                             task='main', return_type='filenames')
     assert len(main_files)==1, \
@@ -141,7 +271,7 @@ def load_fast_sequences(subject, intervals=[32, 64, 128, 512], sfreq=100,
     # actually, take the data_y from the behavioural file, because the triggers
     # sometimes get downsamples in a weird way in the bids pipeline, leading
     # to shifts in the value. Check if this is still halfway matching though!
-    events_file = layout.get(subject=subject, task='main', suffix='events', extension='tsv')
+    events_file = layout_MEG.get(subject=subject, task='main', suffix='events', extension='tsv')
     assert len(events_file)==1, \
         f'[sub-{subject}] {len(events_file)=} more or less than 1, did preprocessing run?'
     df_events = pd.read_csv(events_file[0], sep='\t')
@@ -177,7 +307,7 @@ def load_fast_sequences(subject, intervals=[32, 64, 128, 512], sfreq=100,
 @mem.cache
 def load_fast_images(subject, intervals=[32, 64, 128, 512], tmin=-0.2, tmax=0.5,
                      sfreq=100, verbose=False, positions=[1,2,3,4, 5]):
-    main_files = layout.get(subject=subject, suffix='raw',
+    main_files = layout_MEG.get(subject=subject, suffix='raw',
                             scope='derivatives', proc='clean',
                             task='main', return_type='filenames')
     assert len(main_files)==1, \
@@ -187,7 +317,7 @@ def load_fast_images(subject, intervals=[32, 64, 128, 512], tmin=-0.2, tmax=0.5,
     # actually, take the data_y from the behavioural file, because the triggers
     # sometimes get downsamples in a weird way in the bids pipeline, leading
     # to shifts in the value. Check if this is still halfway matching though!
-    events_file = layout.get(subject=subject, task='main', suffix='events', extension='tsv')
+    events_file = layout_MEG.get(subject=subject, task='main', suffix='events', extension='tsv')
     assert len(events_file)==1, \
         f'[sub-{subject}] {len(events_file)=} more or less than 1, did preprocessing run?'
     df_events = pd.read_csv(events_file[0], sep='\t')
@@ -226,7 +356,7 @@ def load_fast_images(subject, intervals=[32, 64, 128, 512], tmin=-0.2, tmax=0.5,
 @mem.cache
 def load_localizer(subject, tmin=-0.2, tmax=0.8, sfreq=100, verbose=False):
     """load all localizer trials ('slow trials')"""
-    main_files = layout.get(subject=subject, suffix='raw',
+    main_files = layout_MEG.get(subject=subject, suffix='raw',
                             scope='derivatives', proc='clean',
                             task='main', return_type='filenames')
     assert len(main_files)==1, f'[sub-{subject}] {len(main_files)=} more or less than 1, did preprocessing run?'
@@ -234,7 +364,7 @@ def load_localizer(subject, tmin=-0.2, tmax=0.8, sfreq=100, verbose=False):
     # actually, take the data_y from the trigger events file, because the triggers
     # sometimes get downsamples in a weird way in the bids pipeline, leading
     # to shifts in the value.
-    events_file = layout.get(subject=subject, task='main', suffix='events', extension='tsv')
+    events_file = layout_MEG.get(subject=subject, task='main', suffix='events', extension='tsv')
     assert len(events_file)==1, \
         f'[sub-{subject}] {len(events_file)=} more or less than 1, did preprocessing run?'
     df_events = pd.read_csv(events_file[0], sep='\t')

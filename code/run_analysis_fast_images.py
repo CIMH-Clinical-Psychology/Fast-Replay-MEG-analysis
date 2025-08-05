@@ -13,12 +13,13 @@ import settings
 from settings import layout
 import numpy as np
 import seaborn as sns
+from meg_utils import plotting
 import matplotlib.pyplot as plt
-from meg_utils.plotting import savefig
+from meg_utils.plotting import savefig, normalize_lims
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 
 
-for subj in ['01', '23', '03', '04', '09', '13', '26']:
+for subj in ['01', '23', '03', '04', '09', '13', '26', 'emptyroom']:
     # somehow, these give errors when loading, so leave them out for now
     # should be included in the final calculation
     # if you see this in a PR, please let me knowm ;-)
@@ -131,20 +132,37 @@ for subject in tqdm(settings.layout.subjects):
     # sns.lineplot(df_subj, x='timepoint', y='proba', hue='interval')
     df = pd.concat([df, df_subj], ignore_index=True)
 
-fig, axs = plt.subplots(2, 2, figsize=[18, 8])
+plt.rcParams.update({'font.size':14})
+fig, axs = plt.subplots(1, 4, figsize=[16, 4])
 axs = axs.flatten()
 
 for i, interval in enumerate(df.interval.unique()):
     df_sel = df[df.interval==interval]
     ax = axs[i]
-    sns.lineplot(df_sel, x='timepoint', y='proba', hue='position', palette='muted', ax=ax)
-    ax.vlines(np.arange(5)* (100+interval), *ax.get_ylim())
+    sns.lineplot(df_sel, x='timepoint', y='proba', hue='position', palette=settings.palette_wittkuhn1,
+                 ax=ax, legend=False)
+    ax.vlines(np.arange(5)* (100+interval), *ax.get_ylim(), linewidth=0.5, color='black', alpha=0.3)
     # ax.set_xlim(-200, interval*5+750)
-    ax.set_title(f'{interval=}ms\n{normalization=}')
+    if i>0:
+        ax.set_ylabel('')
+    for ax in axs:
+        ax.set_xticks(np.arange(0, 3000, 500), np.arange(0, 3000, 500)/1000)
+        ax.set_xlabel('timepoint (s)')
+    ax.set_title(f'{int(interval)} ms')
     plt.pause(0.1)
 
-fig.tight_layout()
-plt.pause(0.1)
+fig.legend(
+    ['1', '_', '2', '_', '3', '_', '4', '_', '5'],
+    title='item position',
+    loc='center right',
+    bbox_to_anchor=(0.96, 0.6),  # 1.02 puts it just outside the right edge, 0.5 is vertical center
+    bbox_transform=fig.transFigure
+)
+plotting.normalize_lims(axs)
+
+asd
+fig.tight_layout(rect=[0, 0, 0.86, 1])  # leave space on the right for the legend
+
 fig.savefig(settings.plot_dir + f'fast_images_sequence_zscore.png')
 
 #%% decode individual fast images
@@ -231,14 +249,14 @@ for subject in tqdm(settings.layout.subjects):
         sf[interval] += [np.nanmean(sf_subj[interval], 0)]
         sb[interval] += [np.nanmean(sb_subj[interval], 0)]
 
-    for i, interval in enumerate(sf_subj):
-        ax = axs_subj[i]
-        tdlm.plotting.plot_sequenceness(sf_subj[interval], sb_subj[interval],
-                                        which=['fwd', 'bkw'], ax=axs_subj[i])
-        ax.set_title(f'{interval=} ms')
-        plt.pause(0.1)
-    fig_subj.tight_layout()
-    savefig(fig_subj, f'{settings.plot_dir}/sequence/fast_images_sequenceness_{subject}.png')
+    # for i, interval in enumerate(sf_subj):
+    #     ax = axs_subj[i]
+    #     tdlm.plotting.plot_sequenceness(sf_subj[interval], sb_subj[interval],
+    #                                     which=['fwd', 'bkw'], ax=axs_subj[i])
+    #     ax.set_title(f'{interval=} ms')
+    #     plt.pause(0.1)
+    # fig_subj.tight_layout()
+    # savefig(fig_subj, f'{settings.plot_dir}/sequence/fast_images_sequenceness_{subject}.png')
 
 
 
@@ -269,85 +287,99 @@ df = pd.DataFrame()
 # axs_subj = axs_subj.flatten()
 zscore = lambda x, axis, nan_policy:x
 
-for max_true_trans in [0, 1, 2, 3, 4]:
-    sf1 = {interval: [] for interval in intervals}
-    sb1 = {interval: [] for interval in intervals}
-    sf2 = {interval: [] for interval in intervals}
-    sb2 = {interval: [] for interval in intervals}
-    for subject in tqdm(settings.layout.subjects):
-        if subject in ['05', '12', '15', '16', '20', '21', '22', '27', '28', '29']:
-            continue
+sf1 = {interval: [] for interval in intervals}
+sb1 = {interval: [] for interval in intervals}
+sf2 = {interval: [] for interval in intervals}
+sb2 = {interval: [] for interval in intervals}
+for subject in tqdm(settings.layout.subjects):
+    if subject in ['05', '12', '15', '16', '20', '21', '22', '27', '28', '29']:
+        continue
 
-        # load classifier that we previously computed
-        clf = bids_utils.load_latest_classifier(subject)
-        data_x, data_y, beh = bids_utils.load_fast_sequences(subject)
-        probas = clf.predict_proba(data_x.transpose(0, 2, 1).reshape([-1, data_x.shape[1]])).reshape([data_x.shape[0], data_x.shape[-1], -1])
+    # load classifier that we previously computed
+    clf = bids_utils.load_latest_classifier(subject)
+    data_x, data_y, beh = bids_utils.load_fast_sequences(subject)
+    probas = clf.predict_proba(data_x.transpose(0, 2, 1).reshape([-1, data_x.shape[1]])).reshape([data_x.shape[0], data_x.shape[-1], -1])
 
-        tf_trials = [seq2tf(''.join(num2char(df_trial.trigger.values))) for df_trial in beh]
+    tf_trials = [seq2tf(''.join(num2char(df_trial.trigger.values))) for df_trial in beh]
 
-        # group trials by sequence
-        seqs = set([''.join(df.sequence.values) for df in beh])
-        trials_grouped = {seq:[p for p, df in zip(probas, beh) if seq==''.join(df['sequence'].values)] for seq in seqs}
+    # group trials by sequence
+    seqs = set([''.join(df.sequence.values) for df in beh])
+    trials_grouped = {seq:[p for p, df in zip(probas, beh) if seq==''.join(df['sequence'].values)] for seq in seqs}
 
-        sf1_subj = {interval: [] for interval in intervals}
-        sb1_subj = {interval: [] for interval in intervals}
-        sf2_subj = {interval: [] for interval in intervals}
-        sb2_subj = {interval: [] for interval in intervals}
-        for seq, trials in trials_grouped.items():
-            trials_mean = np.mean(trials, 0)
-            tf = seq2tf(seq)
-            interval =[df.interval_time.iloc[0] for df in beh if seq==''.join(df['sequence'].values)][0]
+    sf1_subj = {interval: [] for interval in intervals}
+    sb1_subj = {interval: [] for interval in intervals}
+    sf2_subj = {interval: [] for interval in intervals}
+    sb2_subj = {interval: [] for interval in intervals}
+    for seq, trials in trials_grouped.items():
+        trials_mean = np.mean(trials, 0)
+        tf = seq2tf(seq)
+        interval =[df.interval_time.iloc[0] for df in beh if seq==''.join(df['sequence'].values)][0]
 
-            # length = int((interval+100)*5)//10 + 20  # assuming 100 Hz sfreq
-            max_lag = int((interval+100)/10) + 10
-            sf1_trial, sb1_trial = tdlm.compute_1step(trials_mean, tf, n_shuf=None,
-                                                      max_lag=max_lag, max_true_trans=max_true_trans)
-            sf2_trial, sb2_trial = tdlm.compute_2step(trials_mean, tf, n_shuf=None,
-                                                      max_lag=max_lag)
-            sf1_subj[interval] += [zscore(sf1_trial, axis=-1, nan_policy='omit')]
-            sb1_subj[interval] += [zscore(sb1_trial, axis=-1, nan_policy='omit')]
-            sf2_subj[interval] += [zscore(sf2_trial, axis=-1, nan_policy='omit')]
-            sb2_subj[interval] += [zscore(sb2_trial, axis=-1, nan_policy='omit')]
+        # length = int((interval+100)*5)//10 + 20  # assuming 100 Hz sfreq
+        max_lag = int((interval+100)/10) + 10
+        sf1_trial, sb1_trial = tdlm.compute_1step(trials_mean, tf, n_shuf=None,
+                                                  max_lag=max_lag)
+        sf2_trial, sb2_trial = tdlm.compute_2step(trials_mean, tf, n_shuf=None,
+                                                  max_lag=max_lag)
+        sf1_subj[interval] += [zscore(sf1_trial, axis=-1, nan_policy='omit')]
+        sb1_subj[interval] += [zscore(sb1_trial, axis=-1, nan_policy='omit')]
+        sf2_subj[interval] += [zscore(sf2_trial, axis=-1, nan_policy='omit')]
+        sb2_subj[interval] += [zscore(sb2_trial, axis=-1, nan_policy='omit')]
 
-        for interval in intervals:
-            sf1[interval] += [np.nanmean(sf1_subj[interval], 0)]
-            sb1[interval] += [np.nanmean(sb1_subj[interval], 0)]
-            sf2[interval] += [np.nanmean(sf2_subj[interval], 0)]
-            sb2[interval] += [np.nanmean(sb2_subj[interval], 0)]
+    for interval in intervals:
+        sf1[interval] += [np.nanmean(sf1_subj[interval], 0)]
+        sb1[interval] += [np.nanmean(sb1_subj[interval], 0)]
+        sf2[interval] += [np.nanmean(sf2_subj[interval], 0)]
+        sb2[interval] += [np.nanmean(sb2_subj[interval], 0)]
 
-        # for i, interval in enumerate(sf_subj):
-        #     ax = axs_subj[i]
-        #     tdlm.plotting.plot_sequenceness(sf1_subj[interval], sb1_subj[interval],
-        #                                     which=['fwd', 'bkw'], ax=axs_subj[i])
-        #     ax.set_title(f'{interval=} ms')
-        #     plt.pause(0.1)
+    # for i, interval in enumerate(sf_subj):
+    #     ax = axs_subj[i]
+    #     tdlm.plotting.plot_sequenceness(sf1_subj[interval], sb1_subj[interval],
+    #                                     which=['fwd', 'bkw'], ax=axs_subj[i])
+    #     ax.set_title(f'{interval=} ms')
+    #     plt.pause(0.1)
 
-        # fig_subj.tight_layout()
-        # savefig(fig_subj, f'{settings.plot_dir}/sequence/fast_images_sequenceness_supertrials_{subject}.png')
+    # fig_subj.tight_layout()
+    # savefig(fig_subj, f'{settings.plot_dir}/sequence/fast_images_sequenceness_supertrials_{subject}.png')
 
 
-    fig_subj, axs_subj = plt.subplots(2, 2, figsize=[12, 8])
-    axs_subj = axs_subj.flatten()
-    for i, interval in enumerate(intervals):
-        ax = axs_subj[i]
-        tdlm.plotting.plot_sequenceness(sf1[interval], sb1[interval],
-                                        which=['fwd', 'bkw'], ax=axs_subj[i])
-        ax.set_title(f'{interval=} ms')
-        plt.pause(0.1)
-    fig_subj.suptitle(f'All subjects, fast images sequenceness 1-step \n{max_true_trans=}')
+fig_subj, axs_subj = plt.subplots(2, 2, figsize=[12, 8])
+axs_subj = axs_subj.flatten()
+for i, interval in enumerate(intervals):
+    ax = axs_subj[i]
+    tdlm.plotting.plot_sequenceness(sf1[interval], sb1[interval],
+                                    which=['fwd', 'bkw'], ax=axs_subj[i])
+    ax.set_title(f'{interval=} ms')
+    plt.pause(0.1)
+
+
+fig, ax = plt.subplots(1, 1)
+for i, interval in enumerate(intervals):
+    tdlm.plot_sequenceness(sf1[interval], sb1[interval],
+                           maxlag=5,
+                           which=['fwd'],
+                           color=settings.palette_wittkuhn2[i],
+                           ax=ax,
+                           clear=False,
+                           plot95=False,
+                           plotmax=False)
+
+ax.hlines(-0.6, 0, 700, linestyles='--', color=settings.palette_wittkuhn2[0], linewidth=1.5, alpha=0.6, label='_')
+ax.hlines(0.6, 0, 700, linestyles='--', color=settings.palette_wittkuhn2[0], linewidth=1.5, alpha=0.6, label='_')
+
+ax.set_title('')
+ax.legend([32, 64, 128, 512], title='interval')
+ax.set_xticks(np.arange(0, 750, 100), np.arange(0, 750, 100))
+ax.set_xlabel('time lag (ms)')
+
+fig_subj, axs_subj = plt.subplots(2, 2, figsize=[12, 8])
+axs_subj = axs_subj.flatten()
+for i, interval in enumerate(intervals):
+    ax = axs_subj[i]
+    tdlm.plotting.plot_sequenceness(sf2[interval], sb2[interval],
+                                    which=['fwd', 'bkw'], ax=axs_subj[i])
+    ax.set_title(f'{interval=} ms')
+    fig_subj.suptitle('All subjects, fast images sequenceness 2-step')
+    plt.pause(0.1)
     fig_subj.tight_layout()
-    fig_subj.savefig(f'{settings.plot_dir}/max_true_trans_{max_true_trans}_fast_images_sequenceness_supertrials_all.png')
-
-
-
-    fig_subj, axs_subj = plt.subplots(2, 2, figsize=[12, 8])
-    axs_subj = axs_subj.flatten()
-    for i, interval in enumerate(intervals):
-        ax = axs_subj[i]
-        tdlm.plotting.plot_sequenceness(sf2[interval], sb2[interval],
-                                        which=['fwd', 'bkw'], ax=axs_subj[i])
-        ax.set_title(f'{interval=} ms')
-        fig_subj.suptitle('All subjects, fast images sequenceness 2-step')
-        plt.pause(0.1)
-        fig_subj.tight_layout()
-        fig_subj.savefig(f'{settings.plot_dir}/fast_images_sequenceness_supertrials_all-2step.png')
+    fig_subj.savefig(f'{settings.plot_dir}/fast_images_sequenceness_supertrials_all-2step.png')
