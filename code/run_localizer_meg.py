@@ -7,13 +7,15 @@ run localizer cross validation of decoding accuracy on MEG data.
 
 @author: simon.kern
 """
+import os
 import mne
 import sklearn
 from tqdm import tqdm
 import pandas as pd
 from meg_utils import plotting, decoding
 from bids import BIDSLayout
-from bids_utils import layout, load_localizer, make_bids_fname
+from bids_utils import layout_MEG as layout
+from bids_utils import load_localizer, make_bids_fname
 from meg_utils.decoding import cross_validation_across_time
 import settings
 from sklearn.linear_model import LogisticRegressionCV, LogisticRegression
@@ -37,15 +39,15 @@ pkl_localizer_Cs = settings.cache_dir + '/localizer_cs.pkl.gz'
     # if you see this in a PR, please let me knowm ;-)
     # if subj in layout.subjects:
         # layout.subjects.remove(subj)
-#
+
 stop
 #%% Calculate the best regularization parameter
 
 df_all = pd.DataFrame()
 fig, ax = plt.subplots(figsize=[8, 6])
 
-Cs = np.logspace(-4, 4, 25, dtype=np.float16)
-Cs = [best_C]  # comment this here to not having to loop over everything
+Cs = np.logspace(-1, 2, 25).round(3)
+# Cs = [best_C]  # comment this here to not having to loop over everything
 for C in tqdm(Cs, desc='running through C'):
     df_c = pd.DataFrame()
     for i, subject in enumerate(layout.subjects):
@@ -53,7 +55,7 @@ for C in tqdm(Cs, desc='running through C'):
         clf = LogisticRegression(penalty='l1', C=C, solver='liblinear')
 
         # load MEG data from the localizer
-        data_x, data_y, _ = load_localizer(subject=subject, verbose=False, tmax=tmax)
+        data_x, data_y, _ = load_localizer(subject=subject, verbose=False)
 
         # do cross validation decoding in sensor space across time
         df_subj = cross_validation_across_time(data_x, data_y, subj=subject,

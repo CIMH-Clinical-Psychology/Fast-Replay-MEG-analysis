@@ -353,7 +353,7 @@ def load_fast_images(subject, intervals=[32, 64, 128, 512], tmin=-0.2, tmax=0.5,
     assert all((df_beh.trigger).values==data_y)
     return data_x, data_y, df_beh
 
-@mem.cache
+@mem.cache(ignore=['verbose'])
 def load_localizer(subject, tmin=-0.2, tmax=0.8, sfreq=100, verbose=False):
     """load all localizer trials ('slow trials')"""
     main_files = layout_MEG.get(subject=subject, suffix='raw',
