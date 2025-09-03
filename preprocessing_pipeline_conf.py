@@ -89,7 +89,7 @@ notch_trans_bandwidth: float = 1.0  # Set notch filter transition bandwidth to 1
 # %%
 # Parallelization
 
-n_jobs: int = 4  # don't use too many, memory overhead is enormous
+n_jobs: int = 6  # don't use too many, memory overhead is enormous
 parallel_backend: Literal["loky"] = "loky"  # Use 'loky' backend for parallel processing
 
 # %%

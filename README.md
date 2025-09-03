@@ -15,11 +15,17 @@ Run the preprocessing pipeline with the following commands within the root direc
 Each session/task must be run independently as `mne_bids_pipeline` can't process rest and task data together yet.
 
 ```bash
-export BIDS_ROOT=/data/fastreplay/Fast-Replay-MEG-bids/
+export BIDS_ROOT=/zi/flstorage/group_klips/data/data/Simon/highspeed/highspeed-MEG-bids/
 
 mne_bids_pipeline --task rest1 --root-dir $BIDS_ROOT --deriv_root $BIDS_ROOT/derivatives/ --config=preprocessing_pipeline_conf.py --steps init,preprocessing
 mne_bids_pipeline --task rest2 --root-dir $BIDS_ROOT --deriv_root $BIDS_ROOT/derivatives/  --config=preprocessing_pipeline_conf.py --steps init,preprocessing
 mne_bids_pipeline --task main --root-dir $BIDS_ROOT --deriv_root $BIDS_ROOT/derivatives/  --config=preprocessing_pipeline_conf.py --steps init,preprocessing
+
+# next run tasks with missing EOGs
+mne_bids_pipeline --task rest1 --root-dir $BIDS_ROOT --deriv_root $BIDS_ROOT/derivatives/ --config=preprocessing_pipeline_conf_eog-missing.py --steps init,preprocessing
+mne_bids_pipeline --task rest2 --root-dir $BIDS_ROOT --deriv_root $BIDS_ROOT/derivatives/  --config=preprocessing_pipeline_conf_eog-missing.py --steps init,preprocessing
+mne_bids_pipeline --task main --root-dir $BIDS_ROOT --deriv_root $BIDS_ROOT/derivatives/  --config=preprocessing_pipeline_conf_eog-missing.py --steps init,preprocessing
+
 ```
 
 ```python

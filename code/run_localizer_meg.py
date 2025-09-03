@@ -5,10 +5,19 @@ Created on Tue Nov 19 09:38:18 2024
 
 run localizer cross validation of decoding accuracy on MEG data.
 
+We will first run the localizer as has been done in previous studies.
+That means we will use global parameters for the classifiers, i.e. train each
+classifier on the same timepoint and with the same regularization parameter.
+
+then later, we will look at individually optimized parameters that are
+subject-specific, additionally combine with PCA and/or time embeddings or more
+sophisticated stuff.
+
 @author: simon.kern
 """
 import os
 import mne
+import logging
 import sklearn
 from tqdm import tqdm
 import pandas as pd
@@ -16,68 +25,125 @@ from meg_utils import plotting, decoding
 from bids import BIDSLayout
 from bids_utils import layout_MEG as layout
 from bids_utils import load_localizer, make_bids_fname
-from meg_utils.decoding import cross_validation_across_time
+from meg_utils.decoding import cross_validation_across_time, LogisticRegressionOvaNegX
 import settings
 from sklearn.linear_model import LogisticRegressionCV, LogisticRegression
 import seaborn as sns
 import matplotlib.pyplot as plt
 import numpy as np
 import joblib
+from joblib import Parallel, delayed
+import warnings
+from sklearn.exceptions import ConvergenceWarning
+import telegram_send
 
+plt.rc('font', size=14)          # default text
+plt.rc('axes', titlesize=16)     # axes title
+plt.rc('axes', labelsize=12)     # x and y labels
+plt.rc('xtick', labelsize=11)    # x tick labels
+plt.rc('ytick', labelsize=11)    # y tick labels
+plt.rc('legend', fontsize=11)    # legend
+
+warnings.filterwarnings(
+    "ignore",
+    category=FutureWarning,
+)
+# Ignore only the specific convergence warning from sklearn
+warnings.filterwarnings("ignore", category=ConvergenceWarning)
 #%% Settings
 tmin = -0.2
 tmax = 0.8
 ex_per_fold = 8
 best_C = 4.640625  # previously computed
-tsel = 'best'  # either take the best individually timepoint or the mean peak across participants
+n_subjects = len(layout.subjects)
 pkl_localizer_Cs = settings.cache_dir + '/localizer_cs.pkl.gz'
-
-# for subj in ['01', '23', '03', '04', '09', '13', '26']:
-# for subj in ['01', '03', '04', '09', '13', '23', '26', 'emptyroom']:
-    # somehow, these give errors when loading, so leave them out for now
-    # should be included in the final calculation
-    # if you see this in a PR, please let me knowm ;-)
-    # if subj in layout.subjects:
-        # layout.subjects.remove(subj)
+pkl_probas = settings.cache_dir + '/localizer_probas.pkl.gz'
+pkl_accs = settings.cache_dir + '/localizer_accs.pkl.gz'
 
 stop
 #%% Calculate the best regularization parameter
 
-df_all = pd.DataFrame()
+# we have a grid of values and evaluate them. Then we choose the peak
+# and run an evaluation of the values around the peak.
+# repeat n times and get an optimal value, similar to iterative halving
+n_iterations = 5       # zoom in this many times
+values_per_iter = 7    # evaluate 7 values per iteration
+bounds = [0.1, 100]  # start with these bounds
+ex_per_fold = 5
+
+df = pd.DataFrame()
 fig, ax = plt.subplots(figsize=[8, 6])
 
-Cs = np.logspace(-1, 2, 25).round(3)
-# Cs = [best_C]  # comment this here to not having to loop over everything
-for C in tqdm(Cs, desc='running through C'):
-    df_c = pd.DataFrame()
-    for i, subject in enumerate(layout.subjects):
+tqdm_loop = tqdm(total=n_iterations*n_subjects, desc='cross-validating')
 
-        clf = LogisticRegression(penalty='l1', C=C, solver='liblinear')
+def _run_one(subject, C, data_x, data_y):
+    np.random.seed(int(subject))
+    clf = LogisticRegressionOvaNegX(penalty='l1', C=C, solver='liblinear', max_iter=1000)
 
-        # load MEG data from the localizer
+    df = cross_validation_across_time(
+        data_x, data_y, subj=subject, n_jobs=2, tmin=tmin, tmax=tmax,
+        ex_per_fold=ex_per_fold, clf=clf, verbose=False
+    ).groupby('timepoint').mean(True).reset_index()
+
+    df['subject'] = subject
+    df['C'] = np.round(C, 3)
+    df['iteration'] = iteration
+    return df
+
+
+for iteration in range(n_iterations):
+
+    params = np.linspace(*bounds, values_per_iter)
+    df_iter = pd.DataFrame()
+    for subject in layout.subjects:
+        # Parallelize over C for each subject
         data_x, data_y, _ = load_localizer(subject=subject, verbose=False)
+        data_x, data_y = decoding.stratify(data_x, data_y)
+        res =  Parallel(n_jobs=-1)(delayed(_run_one)(subject, C, data_x, data_y) for C in params)
+        df_iter = pd.concat([df_iter, pd.concat(res)], ignore_index=True)
+        tqdm_loop.update()
 
-        # do cross validation decoding in sensor space across time
-        df_subj = cross_validation_across_time(data_x, data_y, subj=subject,
-                                               n_jobs=-1, tmin=tmin, tmax=tmax,
-                                               ex_per_fold=ex_per_fold, clf=clf,
-                                               verbose=False)
-        df_subj = df_subj.groupby('timepoint').mean(True).reset_index()
-        df_subj['subject'] = subject
-        df_subj['C'] = C
-        df_c = pd.concat([df_c, df_subj])
-
-    df_all = pd.concat([df_all, df_c], ignore_index=True)
     ax.clear()
-    sns.lineplot(data=df_c, x='timepoint', y='accuracy', ax=ax)
-    ax.set_title(f'{C=} all participants {len(layout.subjects)=}')
-    fig.savefig(settings.plot_dir + f'localizer_C{C:011.6f}.png')
-    plt.pause(0.1)
+    df_mean = df_iter.groupby(['timepoint', 'subject', 'C']).mean(True).reset_index()
+    sns.lineplot(data=df_mean, x='timepoint', y='accuracy', hue='C', ax=ax, legend='full')
+    ax.set_title(f'{bounds=} all participants {len(layout.subjects)=}')
+    plotting.savefig(fig, settings.plot_dir + f'/regularization/localizer_iteration-{iteration}_bounds-{bounds[0]:0.3f}-{bounds[1]:0.3f}.png')
 
-df_all['C'] = df_all['C'].astype(float)
-joblib.dump(df_all, pkl_localizer_Cs)
+    # calculate bounds for next iteration
+    df_mean = df_iter.groupby(['timepoint', 'C']).mean(True).reset_index()
+    best_c = df_mean.C[df_mean.accuracy.argmax()]
+    bound_min = params[max(np.argmin(abs(params-best_c))-1, 0)]
+    bound_max = params[min(np.argmin(abs(params-best_c))+1, len(params)-1)]
+    bounds = [bound_min, bound_max]
+    print(f'{best_c=}, new {bounds=}')
+    telegram_send.send(messages=[f'{iteration=} {best_c=}, new {bounds=}'])
+    df = pd.concat([df, df_iter], ignore_index=True)
 
-#%% Train a final decoder with the best C and the best T per participant
+# save for later use
+joblib.dump(df, pkl_localizer_Cs)
+
+# plot final result
+df_mean = df.groupby(['timepoint', 'C']).mean(True).reset_index()
+best_c = df_mean.C[df_mean.accuracy.argmax()]
+
+pdf_mean = df[df.C==best_c].groupby(['timepoint', 'subject']).mean(True).reset_index()
+
+ax.clear()
+sns.lineplot(data=df_mean, x='timepoint', y='accuracy', hue='C', ax=ax)
+ax.set_title(f'{best_c=} all participants {len(layout.subjects)=}')
+plotting.savefig(fig, settings.plot_dir + f'/regularization/localizer_best.png')
+plt.pause(0.1)
+
+#%% plot peak C regularization
+df_all = joblib.load(pkl_localizer_Cs)
+best_c = df_mean.C[df_mean.accuracy.argmax()]
+
+fig, ax = plt.subplots(figsize=[8, 6])
+sns.lineplot(df_all, x='C', y='accuracy', hue='subject', ax=ax)
+
+plotting.savefig(fig, settings.plot_dir + f'/regularization/localizer_regularization_overview.png')
+plotting.savefig(fig, settings.plot_dir + f'/supplement/localizer_regularization_gridsearch.png')
+#%% Train final decoders with the overall best C and timepoint
 
 # load precomputed results from disk
 df_all = joblib.load(pkl_localizer_Cs)
@@ -93,7 +159,7 @@ plt.figure()
 ax = sns.lineplot(data=df_all_mean, x='C', y='accuracy')
 ax.set(xscale='log')
 
-best_C = df_all_mean.C[df_all_mean.accuracy.argmax()]
+best_C = df_all_mean.C[df_all_mean.accuracy.argmax()].round(1)
 
 df_proba = pd.DataFrame()
 
@@ -102,24 +168,22 @@ for i, subject in enumerate(tqdm(layout.subjects, desc='training classifier')):
     # load data
     data_x, data_y, _ = load_localizer(subject=subject, verbose=False)
 
-    # train classifier and save
-    if tsel=='best':
-        t = df_all[df_all.subject==subject].groupby('timepoint').mean(True).reset_index().accuracy.argmax()
-    elif tsel=='mean':
-        t = peak_t_idx
+    if len(set(np.bincount(data_y)))!=1:
+        logging.info(f'stratifying for {subject=} as unequal classes found')
+        data_x, data_y = decoding.stratify(data_x, data_y)
 
-    clf = LogisticRegression(penalty='l1', C=best_C, solver='liblinear')
-    clf = decoding.LogisticRegressionOvaNegX(clf, C=best_C)
+    clf_base = LogisticRegression(penalty='l1', C=best_C, solver='liblinear')
+    clf = decoding.LogisticRegressionOvaNegX(clf_base, C=best_C)
 
-    clf.fit(data_x[:, :, t], data_y)
+    clf.fit(data_x[:, :, peak_t_idx], data_y)
     clf_pkl_latest = make_bids_fname('latest', modality='clf', subject=f'sub-{subject}', suffix='clf')
     clf_pkl = make_bids_fname('latest', modality='clf', subject=f'sub-{subject}', suffix='clf',
-                              tsel=tsel, C=np.round(best_C, 2), t=t)
+                              C=best_C, t=peak_t_idx)
 
     # save once as latest
-    decoding.save_clf(clf, clf_pkl_latest, metadata=dict(data_y=data_y, t=t, tsel=tsel))
+    decoding.save_clf(clf, clf_pkl_latest, metadata=dict(data_y=data_y, t=peak_t_idx))
     # save another time with filename for archiving
-    decoding.save_clf(clf, clf_pkl, metadata=dict(data_y=data_y, t=t, tsel=tsel))
+    decoding.save_clf(clf, clf_pkl, metadata=dict(data_y=data_y, t=peak_t_idx))
 
     df_subj, probas = cross_validation_across_time(data_x, data_y, subj=subject,
                                                    n_jobs=-1, tmin=tmin, tmax=tmax,
@@ -141,85 +205,106 @@ for i, subject in enumerate(tqdm(layout.subjects, desc='training classifier')):
     df_proba_subj['subject'] = subject
     df_proba = pd.concat([df_proba, df_proba_subj], ignore_index=True)
 
+joblib.dump(df_proba, pkl_probas)
 
-#%% plot probabilities
-fix, axs = plt.subplots(2, 3, figsize=[14, 8])
+#%% FIGURE plot probabilities
+fig, axs = plt.subplots(2, 3, figsize=[14, 6])
+sns.despine(fig)
 axs = axs.flatten()
-ax_b = axs[-1]
 # fig, axs, ax_b = plotting.make_fig(5, bottom_plots=[0, 0, 1], figsize=[12, 8],
                                    # xlabel='Timepoint', ylabel='Probability')
 
 for stim in np.unique(data_y):
     ax = axs[stim]
-    stimulus =settings.img_trigger[stim]
-    sns.lineplot(df_proba[df_proba.stimulus==stimulus], x='timepoint', style='subject',
-                 y='proba', hue='label', ax=ax, alpha=0.1, legend=False)
-    sns.lineplot(df_proba[df_proba.stimulus==stimulus], x='timepoint',
-                 y='proba', hue='label', ax=ax)
-    ax.set_title(stimulus)
+    stimulus = settings.img_trigger[stim]
+    stim_name = settings.trigger_translation[stimulus]
+    ax.hlines(0.2, -200, 500, color='gray', linestyle='--')
+    sns.lineplot(df_proba[df_proba.stimulus==stimulus], x='timepoint',  y='proba', hue='label', ax=ax)
+    ax.set(title=stim_name, ylabel='probability', xlabel='ms after stim onset', xlim=[-100, 500])
     plt.pause(0.1)
 
-
-
+# last, mean of all
+ax = axs[-1]
 df_proba_mean = df_proba.groupby(['timepoint', 'label', 'subject']).mean(True).reset_index()
+ax.hlines(0.2, -200, 500, color='gray', linestyle='---', linewidths=1)
+sns.lineplot(df_proba_mean, x='timepoint',  y='proba', hue='label', ax=ax)
+ax.set(title=stim_name, ylabel='probability', xlabel='ms after stim onset', xlim=[-100, 500])
 
-sns.lineplot(df_proba_mean, x='timepoint', y='proba', hue='label', style='subject',
-             ax=ax_b, alpha=0.1, legend=False)
-sns.lineplot(df_proba_mean, x='timepoint', y='proba', hue='label', ax=ax_b)
-ax_b.set_title('All stimuli')
 plotting.normalize_lims(list(axs))
-fig.tight_layout()
-plt.pause(0.1)
-fig.savefig(settings.plot_dir + f'localizer_perclass.png')
+plotting.savefig(fig, settings.plot_dir + f'/figures/localizer_MEG_probabilities.png')
 
-#%% plot per participant
+#%% FIGURE plot accuracy
 
-df = df_all[df_all.C==best_C]
+fig, ax = plt.subplots(1, 1, figsize=[8, 6])
 
-
-fix, ax = plt.subplots(1, 1, figsize=[8, 6])
-
-
-df_mean = df.groupby(['timepoint', 'subject']).mean(True).reset_index()
-sns.lineplot(df_mean, x='timepoint', y='accuracy', hue='subject',
-             legend=False, palette=sns.dark_palette("#69d", reverse=True),
-             alpha=0.2)
-
-df_mean = df.groupby(['timepoint']).mean(True).reset_index()
-sns.lineplot(df_mean, x='timepoint', y='accuracy', linewidth=4, color=sns.color_palette()[0])
-sns.despine()
-
-ax.hlines(0.2, -200, 2000, linestyle='--', color='gray')
-
-#%% plot accuracy curves
-
-df_proba = pd.DataFrame()
-clf = LogisticRegression(penalty='l1', C=5, solver='liblinear')
-
+clf_base = LogisticRegression(penalty='l1', C=4.6, solver='liblinear')
+clf = LogisticRegressionOvaNegX(clf_base, C=4.6)
 df = pd.DataFrame()
 
 for i, subject in enumerate(tqdm(layout.subjects, desc='training classifier')):
     # first calculate the peak decoding timepoint for this participant
     # load data
+
     data_x, data_y, _ = load_localizer(subject=subject, verbose=False)
-    df_subj = cross_validation_across_time(data_x, data_y, clf=clf)
+
+    if len(set(np.bincount(data_y)))!=1:
+        logging.info(f'stratifying for {subject=} as unequal classes found')
+        data_x, data_y = decoding.stratify(data_x, data_y)
+
+    df_subj = cross_validation_across_time(data_x, data_y, clf=clf, ex_per_fold=1, n_jobs=-1)
     df_subj = df_subj.groupby('timepoint').mean(True).reset_index()
     df = pd.concat([df, df_subj], ignore_index=True)
-    break
 
-plt.rcParams.update({'font.size':14})
-fig, ax = plt.subplots(1, 1, figsize=[4, 3])
+
 sns.lineplot(df, x='timepoint', y='accuracy', ax=ax)
 ax.hlines(0.2, -100, 500, color='black', alpha=0.5, linestyle='--')
-ax.set_ylim(0, 0.8)
-ax.set_xticks([-100, 0, 100, 200, 300, 400, 500])
 ax.legend(['decoding acc.', 'SE', 'chance level'], fontsize=10, loc='upper left')
-ax.set_xlabel('ms after stim onset')
+ax.set(xlabel='ms after stim onset', xticks=[-100, 0, 100, 200, 300, 400, 500], title='Decoding Accuracy')
 sns.despine()
-plt.pause(0.1)
-plt.tight_layout()
+plotting.savefig(fig, settings.plot_dir + f'/figures/localizer_MEG_accuracy.png')
+
+#%% SUPPL: plot accuracy per participant
 
 
+clf_base = LogisticRegression(penalty='l1', C=4.6, solver='liblinear')
+clf = LogisticRegressionOvaNegX(clf_base, C=4.6)
+
+# calculate accuracies over time via cross validation
+df_acc = pd.DataFrame()
+for subject in tqdm(layout.subjects):
+    data_x, data_y, _ = load_localizer(subject=subject, verbose=False)
+
+    if len(set(np.bincount(data_y)))!=1:
+        logging.info(f'stratifying for {subject=} as unequal classes found')
+        data_x, data_y = decoding.stratify(data_x, data_y)
+
+    df_subj = cross_validation_across_time(data_x, data_y, clf=clf,
+                                           ex_per_fold=1, n_jobs=-1,
+                                           subj=subject)
+    df_acc = pd.concat([df_acc, df_subj], ignore_index=True)
+
+joblib.dump(df_acc, pkl_accs)
+
+# next plotting
+df_acc = joblib.load(pkl_accs)
+fig, axs = plt.subplots(8, 4, figsize=[8, 10], sharex=True, sharey=True, dpi=70)
+fig.suptitle('Decoding accuracy per participant')
+sns.despine(fig)
+
+for i, (subject, df_subj) in enumerate(tqdm(df_acc.groupby('subject'))):
+    ax = axs.flat[i]
+    ax.vlines(0, 0, 0.75,  color='black')
+    sns.lineplot(df_subj, x='timepoint', y='accuracy', legend=False, ax=ax)
+    ax.set_ylim(0, 0.8)
+    ax.set_yticks([0.2, 0.4, 0.6, 0.8])
+    ax.set_xticks([-100, 0, 100, 200, 300, 400, 500, 600])
+    # ax.hlines(0.2, *ax.get_xlim(), linestyle='--', color='black', alpha=0.5)
+    ax.grid('on')
+    ax.set(title=f'{subject}')
+
+# for ax in axs.flat[30:]: ax.set_axis_off()
+plotting.normalize_lims(axs.flat[:30])
+plotting.savefig(fig, settings.plot_dir + '/supplement/localizer_accuracies.png')
 #%% create GIF of classifiers
 import imageio
 from joblib import Parallel, delayed

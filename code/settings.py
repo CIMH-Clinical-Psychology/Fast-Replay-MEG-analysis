@@ -71,7 +71,15 @@ cache_dir = os.path.abspath(cache_dir)
 plot_dir = os.path.abspath(plot_dir)
 bids_dir_3T_decoding = os.path.abspath(bids_dir_3T_decoding)
 
-#%% initialize BIDS dir
+#%% initialize MEG BIDS dir
+
+ignore_subjects = ['16',  # massive data loss during recording
+                   '12',  # massive data loss during recording
+                   '21',  # moderate data loss
+                   '22',  # massive data loss during recording
+                   '27',  # moderate data loss
+                   ]
+
 if 'bids_dir_meg' in locals():
     bids_dir_meg = os.path.abspath(bids_dir_meg)
     # use database for faster loading. but recreate on each python startup
@@ -81,7 +89,9 @@ if 'bids_dir_meg' in locals():
     if reset_database:
         warnings.warn('resetting MEG BIDS database')
     layout_MEG = BIDSLayout(bids_dir_meg, derivatives=True, database_path=db_path, reset_database=reset_database)
-    layout_MEG.subjects = layout_MEG.get_subjects()
+    layout_MEG.subjects_all = [x for x in layout_MEG.get_subjects() if (not 'emptyroom' in x) and (not x in ignore_subjects)]
+    layout_MEG.subjects = [x for x in layout_MEG.subjects_all if (not x in ignore_subjects)]
+
     if not layout_MEG.subjects:
         warnings.warn('No subjects in layout_MEG, are you sure it exists?')
 else:
@@ -137,6 +147,14 @@ if get_free_space_gb(cache_dir) < 20:
 os.environ['JOBLIB_CACHE_DIR'] = cache_dir
 
 #%% constants
+
+trigger_translation = {'Gesicht': 'face',
+                       'Haus': 'house',
+                       'Katze': 'cat',
+                       'Schuh': 'shoe',
+                       'Stuhl': 'chair',
+                       }
+
 img_trigger = {}  # here, offset of 1 is already removed!
 img_trigger[0] = 'Gesicht'
 img_trigger[1]   = 'Haus'

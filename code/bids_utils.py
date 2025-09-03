@@ -119,6 +119,7 @@ def load_behaviour(subject, **filters):
 
     # add trigger values of stimuli
     df_beh['trigger'] = df_beh['stim_label'].apply(lambda x: settings.trigger_img.get(x, np.nan)-1)
+    df_beh = df_beh.convert_dtypes()
 
     # apply filter on columns
     for filt in filters:
@@ -142,8 +143,8 @@ def load_decoding_3T(subject, **filters):
 
     these column are known
     'pred_label', 'stim', 'tr', 'seq_tr', 'stim_tr', 'trial', 'run_study',
-           'session', 'tITI', 'id', 'test_set', 'classifier', 'mask', 'class',
-           'probability'
+    'session', 'tITI', 'id', 'test_set', 'classifier', 'mask', 'class',
+    'probability'
 
     Parameters
     ----------
@@ -275,6 +276,8 @@ def load_fast_sequences(subject, intervals=[32, 64, 128, 512], sfreq=100,
     assert len(events_file)==1, \
         f'[sub-{subject}] {len(events_file)=} more or less than 1, did preprocessing run?'
     df_events = pd.read_csv(events_file[0], sep='\t')
+
+    # this is the id ofthe text cue, used as offset for the image sequence
     df_cue = df_events[(df_events.value<16) & (df_events.value>10)]
     events = tsv2events(df_cue, sfreq=sfreq)
     assert len(df_cue)==64
@@ -300,6 +303,11 @@ def load_fast_sequences(subject, intervals=[32, 64, 128, 512], sfreq=100,
                 axis=1, inplace=True)
     df_beh['sequence'] = df_beh['trigger'].apply(lambda x: chr(65 + int(x)))
     beh = [df for _, df in df_beh.groupby('idx')]
+
+    # filter based on intervals
+    data_x = np.array([x for x, df in zip(data_x, beh) if df.interval_time.values[0] in intervals])
+    data_y = np.array([y for y, df in zip(data_y, beh) if df.interval_time.values[0] in intervals])
+    beh = [df for df in beh if df.interval_time.values[0] in intervals]
 
     assert len(beh)==len(data_y)
     return data_x, data_y, beh
@@ -370,7 +378,7 @@ def load_localizer(subject, tmin=-0.2, tmax=0.8, sfreq=100, verbose=False):
     df_events = pd.read_csv(events_file[0], sep='\t')
     df_events = df_events[df_events.value<6]
     events = tsv2events(df_events, sfreq=sfreq)
-    assert len(events)==160
+
     verbose_mne = 'ERROR' if not verbose else 'WARNING'
     # next define the pipeline for loading the raw data
     pipe = DataPipeline([
@@ -396,6 +404,24 @@ def load_localizer(subject, tmin=-0.2, tmax=0.8, sfreq=100, verbose=False):
     # assert sum(triggers!=data_y)<2, f'more than one trigger mismatch {subject=}, {sum(triggers!=data_y)=}?'
     # data_y = (triggers.values -1).astype(int)
     # assert len(data_y)==160
+
+    # some exceptions where the recording was started too late
+    if subject=='13':
+        # error with subject 13
+        df_beh_trunc = df_beh[2:]
+        assert all(events[1:, 2]-1 == data_y)
+        assert len(data_x)==len(data_y)
+        assert len(data_x)==len(df_beh_trunc)
+        return data_x, data_y, df_beh_trunc
+    if subject=='26':
+        # error with subject 26
+        df_beh_trunc = df_beh[8:]
+        assert all(events[:, 2]-1 == data_y)
+        assert len(data_x)==len(data_y)
+        assert len(data_x)==len(df_beh_trunc)
+        return data_x, data_y, df_beh_trunc
+
+    assert len(events)==160
     assert all(events[:, 2]-1 == data_y)
     assert len(set(np.bincount(data_y)))==1
     assert min(data_y)==0
