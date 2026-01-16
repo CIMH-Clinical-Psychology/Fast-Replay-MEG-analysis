@@ -1,0 +1,15 @@
+autoreject
+joblib
+matplotlib
+mne
+natsort
+numpy
+pandas
+pybids
+pyEDFlib
+scikit_learn
+scipy
+seaborn
+tqdm
+utils
+mne-bids-pipeline
