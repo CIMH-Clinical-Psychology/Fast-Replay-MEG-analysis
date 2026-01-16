@@ -27,6 +27,7 @@ import bids_utils
 from meg_utils.decoding import LogisticRegressionOvaNegX
 from mne.decoding import SlidingEstimator
 from sklearn.ensemble import RandomForestClassifier
+from settings import layout_MEG as layout
 
 for subj in ['01', '23', '03', '04', '09', '13', '26']:
     # somehow, these give errors when loading, so leave them out for now
@@ -202,3 +203,97 @@ ax.clear()
 sns.lineplot(df, x='timepoint', y='proba',style='label',
              palette='muted', ax=ax)
 ax.set_title(f'Fast images decoding, n={len(df.subject.unique())}')
+
+#%% gauss smooth probability time series
+
+
+from scipy.ndimage import gaussian_filter
+from meg_utils import misc
+
+sigma = [0, 5, 0]
+
+fig, axs = plt.subplots(2, 2, figsize=[12, 8])
+
+# zscore = lambda x, axis, nan_policy:x
+df = pd.DataFrame()
+for subject in tqdm(layout.subjects):
+    # load classifier that we previously computed
+    clf = bids_utils.load_latest_classifier(subject)
+    data_x, data_y, beh = bids_utils.load_fast_images(subject)
+    probas = clf.predict_proba(data_x.transpose(0, 2, 1).reshape([-1, data_x.shape[1]])).reshape([data_x.shape[0], data_x.shape[-1], -1])
+
+    probas_smooth = gaussian_filter(probas, sigma = sigma)
+
+    timepoint = np.arange(-200, 510, 10)
+    df_subj = misc.to_long_df(probas_smooth, ['target', 'timepoint', 'cls'],
+                              target =beh.trigger,
+                              cls= np.arange(5),
+                              timepoint = timepoint,
+                              value_name='probability')
+    df_subj['target'] = df_subj.target==df_subj.cls
+
+    sns.lineplot(df_subj, x='timepoint', y='probability', hue='target')
+
+    slopes = {interval: [] for interval in intervals}
+
+#%% gauss smooth data before predicting
+from scipy.ndimage import gaussian_filter
+from meg_utils import misc
+
+sigma = [0, 5, 0]
+
+fig, axs = plt.subplots(2, 2, figsize=[12, 8])
+
+# zscore = lambda x, axis, nan_policy:x
+df = pd.DataFrame()
+for subject in tqdm(layout.subjects):
+    # load classifier that we previously computed
+    clf = bids_utils.load_latest_classifier(subject)
+    data_x, data_y, beh = bids_utils.load_fast_images(subject)
+    data_x = gaussian_filter(data_x, sigma = [0, 0, 5])
+
+    probas = clf.predict_proba(data_x.transpose(0, 2, 1).reshape([-1, data_x.shape[1]])).reshape([data_x.shape[0], data_x.shape[-1], -1])
+
+
+    timepoint = np.arange(-200, 510, 10)
+    df_subj = misc.to_long_df(probas, ['target', 'timepoint', 'cls'],
+                              target =beh.trigger,
+                              cls= np.arange(5),
+                              timepoint = timepoint,
+                              value_name='probability')
+    df_subj['target'] = df_subj.target==df_subj.cls
+
+    sns.lineplot(df_subj, x='timepoint', y='probability', hue='target')
+
+    slopes = {interval: [] for interval in intervals}
+
+
+#%% constant convolution
+from scipy.ndimage import convolve
+
+kernel = np.ones([1, 25, 1])
+
+fig, axs = plt.subplots(2, 2, figsize=[12, 8])
+
+# zscore = lambda x, axis, nan_policy:x
+df = pd.DataFrame()
+for subject in tqdm(layout.subjects):
+    # load classifier that we previously computed
+    clf = bids_utils.load_latest_classifier(subject)
+    data_x, data_y, beh = bids_utils.load_fast_images(subject)
+
+    probas = clf.predict_proba(data_x.transpose(0, 2, 1).reshape([-1, data_x.shape[1]])).reshape([data_x.shape[0], data_x.shape[-1], -1])
+
+    probas = convolve(probas, kernel/kernel.sum(), mode='constant', cval=0.2)
+
+    timepoint = np.arange(-200, 510, 10)
+    df_subj = misc.to_long_df(probas, ['target', 'timepoint', 'cls'],
+                              target =beh.trigger,
+                              cls= np.arange(5),
+                              timepoint = timepoint,
+                              value_name='probability')
+    df_subj['target'] = df_subj.target==df_subj.cls
+
+    sns.lineplot(df_subj, x='timepoint', y='probability', hue='target')
+
+    slopes = {interval: [] for interval in intervals}

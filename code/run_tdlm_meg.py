@@ -123,6 +123,7 @@ for i, interval in enumerate(sf_subj):
     ax.set_yticks(np.arange(len(layout.subjects))[::2], layout.subjects[::2])
     ax.set(ylabel='subject', xlabel='time lag', title=f'{interval=} ms')
 
+plotting.normalize_lims(axs, which='v')
 
 fig.suptitle('Forward sequenceness across participants')
 savefig(fig, settings.plot_dir + '/figures/sequenceness_heatmap.png')
@@ -170,6 +171,9 @@ for i, subject in enumerate(tqdm(subjects_rnd)):
     ax = axs.flat[i]
     sns.heatmap(df, cmap='RdBu_r', ax=ax)
     ax.set(xlabel='time lag', ylabel='trial', title=f'{subject=}')
+
+plotting.normalize_lims(axs, 'v')
+fig.suptitle('Forward sequenceness across participants for 32 ms condition')
 savefig(fig, settings.plot_dir + '/figures/sequenceness_trial_level.png')
 
 #%% correlate peak decoding accuracy with sequenceness?

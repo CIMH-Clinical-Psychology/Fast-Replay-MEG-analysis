@@ -78,7 +78,7 @@ tqdm_loop = tqdm(total=n_iterations*n_subjects, desc='cross-validating')
 
 def _run_one(subject, C, data_x, data_y):
     np.random.seed(int(subject))
-    clf = LogisticRegressionOvaNegX(penalty='l1', C=C, solver='liblinear', max_iter=1000)
+    clf = LogisticRegressionOvaNegX(l1_ratio=1, C=C, solver='liblinear', max_iter=1000)
 
     df = cross_validation_across_time(
         data_x, data_y, subj=subject, n_jobs=2, tmin=tmin, tmax=tmax,
@@ -89,7 +89,6 @@ def _run_one(subject, C, data_x, data_y):
     df['C'] = np.round(C, 3)
     df['iteration'] = iteration
     return df
-
 
 for iteration in range(n_iterations):
 
@@ -172,14 +171,13 @@ for i, subject in enumerate(tqdm(layout.subjects, desc='training classifier')):
         logging.info(f'stratifying for {subject=} as unequal classes found')
         data_x, data_y = decoding.stratify(data_x, data_y)
 
-    clf_base = LogisticRegression(penalty='l1', C=best_C, solver='liblinear')
+    clf_base = LogisticRegression(l1_ratio=1, C=best_C, solver='liblinear')
     clf = decoding.LogisticRegressionOvaNegX(clf_base, C=best_C)
 
     clf.fit(data_x[:, :, peak_t_idx], data_y)
     clf_pkl_latest = make_bids_fname('latest', modality='clf', subject=f'sub-{subject}', suffix='clf')
     clf_pkl = make_bids_fname('latest', modality='clf', subject=f'sub-{subject}', suffix='clf',
                               C=best_C, t=peak_t_idx)
-
     # save once as latest
     decoding.save_clf(clf, clf_pkl_latest, metadata=dict(data_y=data_y, t=peak_t_idx))
     # save another time with filename for archiving
@@ -251,10 +249,13 @@ for i, subject in enumerate(tqdm(layout.subjects, desc='training classifier')):
         logging.info(f'stratifying for {subject=} as unequal classes found')
         data_x, data_y = decoding.stratify(data_x, data_y)
 
-    df_subj = cross_validation_across_time(data_x, data_y, clf=clf, ex_per_fold=1, n_jobs=-1)
+    df_subj = cross_validation_across_time(data_x, data_y, clf=clf,
+                                           ex_per_fold=1, n_jobs=-1, subj=subject)
     df_subj = df_subj.groupby('timepoint').mean(True).reset_index()
+    df_subj
     df = pd.concat([df, df_subj], ignore_index=True)
 
+joblib.dump(df, settings.plot_dir + '/pkl/localizer_meg_accuracy.pkl.gz')
 
 sns.lineplot(df, x='timepoint', y='accuracy', ax=ax)
 ax.hlines(0.2, -100, 500, color='black', alpha=0.5, linestyle='--')
@@ -390,3 +391,33 @@ for i, (subj) in enumerate(tqdm(layout.subjects, desc='subj')):
         for filename in png_files:
             image = imageio.imread(filename)
             writer.append_data(image)
+
+
+#%% make combined plot for MEG and fMRI to compare timescales
+import bids_utils
+
+
+# first load the
+df_3T = pd.DataFrame()
+for subject in tqdm([f'{s:02d}' for s in np.arange(1, 40)]):
+
+    df_odd = bids_utils.load_decoding_seq_3T(subject, test_set='test-odd_long', classifier='log_reg')
+    df_odd.tr_onset = df_odd.tr_onset.round(1)
+    df_odd['target'] = df_odd['class']==df_odd['stim']
+    df_odd['accuracy'] = df_odd['pred_label']==df_odd['stim']
+    df_mean = df_odd.groupby(['tr_onset']).mean(True).reset_index()
+    df_mean['subject'] = subject
+    df_3T = pd.concat([df_3T, df_mean], ignore_index=True)
+
+
+
+df_meg = joblib.load(settings.plot_dir + '/pkl/localizer_meg_accuracy.pkl.gz')
+
+sns.lineplot(df, x='tr_onset', y='accuracy', ax=ax)
+ax.hlines(0.2, -0.6, 8, color='black', alpha=0.5, linestyle='--')
+ax.set(xlim=[-0.6, 8], xlabel='seconds after stim onset', title='Decoding accuracy')
+# ax.set_xticks(np.arange(1, 8), [f'TR {x}\n{x*1250}' for x in range (1, 8)])
+ax.legend(['decoding acc.', 'SE', 'chance level'], fontsize=10, loc='upper left')
+sns.despine()
+
+plotting.savefig(fig, settings.plot_dir + f'/figures/localizer_3T_accuracy.png')

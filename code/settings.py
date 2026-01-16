@@ -37,7 +37,7 @@ cwd = os.path.abspath(os.getcwd())
 # bids_dir_3T_decoding - https://gin.g-node.org/lnnrtwttkhn/highspeed-decoding
 
 # machine specific configuration overwrites general directory structure
-if username == 'simon.kern' and host=='zislrds0035.zi.local':  # simons VM
+if username == 'simon.kern' and 'zislrd' in host:  # VM
     cache_dir = '/data/fastreplay/cache/'
     plot_dir = '../plots/'
     bids_dir_meg = '/zi/flstorage/group_klips/data/data/Simon/highspeed/highspeed-MEG-bids/'
@@ -73,12 +73,12 @@ bids_dir_3T_decoding = os.path.abspath(bids_dir_3T_decoding)
 
 #%% initialize MEG BIDS dir
 
-ignore_subjects = ['16',  # massive data loss during recording
-                   '12',  # massive data loss during recording
-                   '21',  # moderate data loss
-                   '22',  # massive data loss during recording
-                   '27',  # moderate data loss
-                   ]
+# ignore_subjects = ['16',  # massive data loss during recording
+#                    '12',  # massive data loss during recording
+#                    '21',  # moderate data loss
+#                    '22',  # massive data loss during recording
+#                    '27',  # moderate data loss
+#                    ]
 
 if 'bids_dir_meg' in locals():
     bids_dir_meg = os.path.abspath(bids_dir_meg)
@@ -89,8 +89,8 @@ if 'bids_dir_meg' in locals():
     if reset_database:
         warnings.warn('resetting MEG BIDS database')
     layout_MEG = BIDSLayout(bids_dir_meg, derivatives=True, database_path=db_path, reset_database=reset_database)
-    layout_MEG.subjects_all = [x for x in layout_MEG.get_subjects() if (not 'emptyroom' in x) and (not x in ignore_subjects)]
-    layout_MEG.subjects = [x for x in layout_MEG.subjects_all if (not x in ignore_subjects)]
+    layout_MEG.subjects_all = [x for x in layout_MEG.get_subjects() if (not 'emptyroom' in x)]
+    layout_MEG.subjects = [x for x in layout_MEG.subjects_all]
 
     if not layout_MEG.subjects:
         warnings.warn('No subjects in layout_MEG, are you sure it exists?')

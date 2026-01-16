@@ -16,7 +16,7 @@ import settings
 from settings import layout_3T, layout_MEG
 import numpy as np
 import seaborn as sns
-from meg_utils import plotting
+from meg_utils import plotting, misc
 import matplotlib.pyplot as plt
 from meg_utils.plotting import savefig, normalize_lims
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
@@ -27,18 +27,13 @@ plt.rc('xtick', labelsize=11)    # x tick labels
 plt.rc('ytick', labelsize=11)    # y tick labels
 plt.rc('legend', fontsize=11)    # legend
 # ---- load data -----
-
+stop
 #%% MEG full sequences probability
 from scipy.stats import zscore
 
-normalization = 'lambda x: np.log(x)/np.log(x).mean(0)'
 normalization = 'lambda x: x/x.mean(0)'
-# normalization = 'lambda x: x'
-
-# normalization = 'lambda x: zscore(x, axis=0)'
-
-
 df_meg = pd.DataFrame()
+
 for subject in tqdm(layout_MEG.subjects):
 
     clf = bids_utils.load_latest_classifier(subject)
@@ -66,6 +61,41 @@ for subject in tqdm(layout_MEG.subjects):
     # sns.lineplot(df_subj, x='timepoint', y='proba', hue='interval')
     df_meg = pd.concat([df_meg, df_subj], ignore_index=True)
 
+#%% MEG individual fast images decoding
+df_meg_single = pd.DataFrame()
+
+for subject in tqdm(layout_MEG.subjects):
+
+    clf = bids_utils.load_latest_classifier(subject)
+    data_x, data_y, df_beh = bids_utils.load_fast_images(subject)
+
+    preds = np.swapaxes([clf.predict(data_x[:, :, t]) for t in range(data_x.shape[-1])], 0, 1)
+
+    accs = (preds.T==data_y).T
+
+    df_subj = misc.to_long_df(accs, columns=['trial', 'timepoint'],
+                              value_name='accuracy',
+                              timepoint=np.arange(-200, 510, 10),
+                              trial={'interval': df_beh.interval_time.astype(int),
+                                     'serial_position': df_beh.serial_position.astype(int)})
+    df_subj = df_subj.groupby(['timepoint', 'interval', 'serial_position']).mean().reset_index()
+    df_subj['subject'] = subject
+
+    df_meg_single = pd.concat([df_meg_single, df_subj], ignore_index=True)
+
+fig, ax = plt.subplots(1, 1, figsize=[8, 6])
+ax.hlines(0.2, -200, 500, linestyle='--', color='black', alpha=0.5, label='chance')
+ax.vlines(0, 0.1, 0.5,color='black', label='image onset')
+sns.lineplot(df_meg_single, x='timepoint', y='accuracy', hue='interval',
+             palette=settings.palette_wittkuhn2)
+savefig(fig, settings.plot_dir + '/fast-sequence_individual_items.png')
+
+fig, ax = plt.subplots(1, 1, figsize=[8, 6])
+ax.hlines(0.2, -200, 500, linestyle='--', color='black', alpha=0.5, label='chance')
+ax.vlines(0, 0.1, 0.5,color='black', label='image onset')
+sns.lineplot(df_meg_single, x='timepoint', y='accuracy', hue='serial_position',
+             palette=settings.palette_wittkuhn2)
+savefig(fig, settings.plot_dir + '/fast-sequence_individual_items-by-position.png')
 
 #%% 3T full sequences probability
 subjects = [f'{i:02d}' for i in range(1, 41)]
