@@ -8,12 +8,19 @@ from annotated_types import Ge, Interval, Len, MinLen
 from mne import Covariance
 from mne_bids import BIDSPath
 
+from packaging.version import Version
+
+import mne_bids_pipeline
 from mne_bids_pipeline.typing import (
     # ArbitraryContrast,
     # DigMontageType,
     # FloatArrayLike,
+    version,
     PathLike,
 )
+
+assert Version(mne_bids_pipeline.__version__)> Version('1.9.0'), \
+    f'must install mne-bids-pipeline>1.9.0, but {mne_bids_pipeline.__version__=}'
 
 # %%05
 # # General settings
@@ -36,13 +43,18 @@ task_is_rest: bool = True  # Treat data as resting-state, disable epoching
 # runs: Literal["all"] = "all"  # Process all runs
 exclude_runs: Optional[dict[str, list[str]]] = None  # No excluded runs
 
-subjects: Sequence[str] | Literal["all"] = ['02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20', '21', '22', '23', '24', '25', '26', '27', '28', '29', '30']  # Analyze all subjects
+subjects: Sequence[str] | Literal["all"] = "all"  # Analyze all subjects
+
 # exclude_subjects: Sequence[str] = ['23']  # No excluded subjects
 process_empty_room: bool = True  # Preprocess empty-room data
 process_rest: bool = True  # Preprocess resting-state data
 ch_types: Sequence[Literal["meg"]] = ["meg"]  # Include MEG and EEG channels
 data_type: Literal["meg", "eeg"] = "meg"  # Data type is MEG
-eog_channels: Sequence[str] = ["BIO002", "BIO003"]  # Specify EOG channels
+
+eog_channels: Sequence[str] = {"default": ["BIO002", "BIO003"],
+                               '01': [] # missing
+                               }
+
 ecg_channel: str = "BIO001"  # Specify ECG channel
 spatial_filter: Literal["ica"] = "ica"  # Use ICA for artifact removal
 ica_n_components: int = 50  # Number of ICA components
@@ -97,9 +109,3 @@ parallel_backend: Literal["loky"] = "loky"  # Use 'loky' backend for parallel pr
 
 log_level: Literal["info"] = "info"  # Set pipeline logging verbosity to 'info'
 mne_log_level: Literal["error"] = "error"  # Set MNE-Python logging verbosity to 'error'
-
-# %%
-# Error Handling
-
-# on_error: Literal["abort"] = "continue"  # Abort processing on errors
-config_validation: Literal["raise"] = "raise"  # Raise exceptions on config validation issues
