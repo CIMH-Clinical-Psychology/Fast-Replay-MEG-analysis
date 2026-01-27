@@ -37,8 +37,8 @@ cwd = os.path.abspath(os.getcwd())
 # bids_dir_3T_decoding - https://gin.g-node.org/lnnrtwttkhn/highspeed-decoding
 
 # machine specific configuration overwrites general directory structure
-if username == 'simon.kern' and 'zislrd' in host:  # VM
-    cache_dir = '/data/fastreplay/cache/'
+if username == 'simon.kern' and '.zi.local' in host:  # VM or cluster
+    cache_dir = f'{home}/Desktop/highspeed-joblib/'
     plot_dir = '../plots/'
     bids_dir_meg = '/zi/flstorage/group_klips/data/data/Simon/highspeed/highspeed-MEG-bids/'
     bids_dir_3T = '/zi/flstorage/group_klips/data/data/Simon/highspeed/highspeed-3T-bids/'
@@ -59,7 +59,7 @@ elif username=='simon' and host=='kubuntu':
     bids_dir_3T_decoding = '/home/simon/Desktop/highspeed-decoding/'
 
 else:
-    raise Exception('No user specific settings found in settings.py')
+    raise Exception(f'No user specific settings found in settings.py with {username=} and {host=}')
 
 #####################################
 # END OF USER-SPECIFIC CONFIGURATION
@@ -70,6 +70,8 @@ else:
 cache_dir = os.path.abspath(cache_dir)
 plot_dir = os.path.abspath(plot_dir)
 bids_dir_3T_decoding = os.path.abspath(bids_dir_3T_decoding)
+
+os.makedirs(cache_dir, exist_ok=True)
 
 #%% initialize MEG BIDS dir
 
@@ -83,12 +85,12 @@ bids_dir_3T_decoding = os.path.abspath(bids_dir_3T_decoding)
 if 'bids_dir_meg' in locals():
     bids_dir_meg = os.path.abspath(bids_dir_meg)
     # use database for faster loading. but recreate on each python startup
-    db_path = cache_dir + '/bids_meg.db'
-    python_start = psutil.Process(os.getpid()).create_time()
-    reset_database = (os.path.getmtime(db_path) if os.path.exists(db_path) else 0) < python_start
-    if reset_database:
-        warnings.warn('resetting MEG BIDS database')
-    layout_MEG = BIDSLayout(bids_dir_meg, derivatives=True, database_path=db_path, reset_database=reset_database)
+    # db_path = cache_dir + '/bids_meg.db'
+    # python_start = psutil.Process(os.getpid()).create_time()
+    # reset_database = (os.path.getmtime(db_path) if os.path.exists(db_path) else 0) < python_start
+    # if reset_database:
+    #     warnings.warn('resetting MEG BIDS database')
+    layout_MEG = BIDSLayout(bids_dir_meg, derivatives=True)
     layout_MEG.subjects_all = [x for x in layout_MEG.get_subjects() if (not 'emptyroom' in x)]
     layout_MEG.subjects = [x for x in layout_MEG.subjects_all]
 
@@ -102,12 +104,12 @@ else:
 if 'bids_dir_3T' in locals():
     bids_dir_3T = os.path.abspath(bids_dir_3T)
     # use database for faster loading. but recreate on each python startup
-    db_path = cache_dir + '/bids_3T.db'
-    python_start = psutil.Process(os.getpid()).create_time()
-    reset_database = (os.path.getmtime(db_path) if os.path.exists(db_path) else 0) < python_start
-    if reset_database:
-        warnings.warn('resetting 3T BIDS database')
-    layout_3T = BIDSLayout(bids_dir_3T, database_path=db_path, reset_database=reset_database)
+    # db_path = cache_dir + '/bids_3T.db'
+    # python_start = psutil.Process(os.getpid()).create_time()
+    # reset_database = (os.path.getmtime(db_path) if os.path.exists(db_path) else 0) < python_start
+    # if reset_database:
+        # warnings.warn('resetting 3T BIDS database')
+    layout_3T = BIDSLayout(bids_dir_3T)
     layout_3T.subjects = layout_3T.get_subjects()
     if not layout_3T.subjects:
         warnings.warn('No subjects in layout_3T, are you sure it exists?')
