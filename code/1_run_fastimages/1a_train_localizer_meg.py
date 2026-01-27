@@ -13,10 +13,15 @@ then later, we will look at individually optimized parameters that are
 subject-specific, additionally combine with PCA and/or time embeddings or more
 sophisticated stuff.
 
+Input: preprocessed MEG data
+Output: - Final Classifier per participant
+        - a csv file with cross-validated localizer trials
+
 @author: simon.kern
 """
-asd
+
 import os
+import sys; sys.path.append('..')
 import mne
 import logging
 import sklearn

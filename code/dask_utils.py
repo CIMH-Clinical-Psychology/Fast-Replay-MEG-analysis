@@ -11,7 +11,8 @@ import atexit
 from dask.distributed import Client
 from dask_jobqueue import SLURMCluster
 
-
+class Local:
+    """a pass-through cluster that only runs locally with n_jobs"""
 
 class SLURM:
     """
@@ -58,10 +59,10 @@ class SLURM:
             cores=self.cores,
             memory=self.memory,
             walltime=self.walltime,
-            node_interface=self.node_interface,
+            interface=self.node_interface,
             scheduler_options={'interface': self.scheduler_interface,
                                'port': self.port},
-            log_directory=os.getcwd()
+            log_directory='/zi/home/simon.kern/'
         )
         self.cluster.scale(jobs=self.jobs)
         self.client = Client(self.cluster)
@@ -77,12 +78,36 @@ class SLURM:
         if self.client:
             self.client.close()
             self.client = None
+        else:
+            print('no open client')
         if self.cluster:
             self.cluster.close()
             self.cluster = None
+        else:
+            print('no open cluster')
 
     def __del__(self):
         self.close()
 
 
-cluster = SLURM()
+def dummy_task(x):
+    """
+    Perform a dummy computation.
+    """
+    import time
+    import numpy as np
+    time.sleep(1)
+    return np.sqrt(x) ** 2
+
+if __name__ == "__main__":
+    from joblib import Parallel, delayed, register_parallel_backend
+    from joblib import parallel_backend
+    # The 'with' block for SLURM ensures the Client is active.
+    # Parallel(backend='dask') will hook into that active Client.
+    client = SLURM(jobs=2, cores=2)
+
+
+    with client:
+        results = Parallel(backend='dask')(delayed(dummy_task)(i) for i in range(10))
+
+    print(results)
