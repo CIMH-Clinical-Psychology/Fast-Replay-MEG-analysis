@@ -19,7 +19,7 @@ import pandas as pd
 from meg_utils import plotting, decoding
 from bids import BIDSLayout
 from bids_utils import layout_MEG as layout
-from bids_utils import load_localizer, make_bids_fname
+from bids_utils import load_localizer, load_fast_images, make_bids_fname
 from meg_utils.decoding import cross_validation_across_time, LogisticRegressionOvaNegX
 from meg_utils import misc
 import settings
@@ -49,8 +49,12 @@ warnings.filterwarnings(
 # Ignore only the specific convergence warning from sklearn
 warnings.filterwarnings("ignore", category=ConvergenceWarning)
 #%% Settings
-tmin = -0.2
-tmax = 0.8
+
+# Default time windows for different conditions
+TIME_WINDOWS = {
+    'slow': {'tmin': -0.2, 'tmax': 0.8},  # localizer images
+    'fast': {'tmin': -0.2, 'tmax': 0.5},  # sequence/fast images
+}
 
 clf = LogisticRegressionOvaNegX(l1_ratio=1, C=0, solver='liblinear', max_iter=1000)
 
@@ -65,7 +69,7 @@ ex_per_fold = 1                     # lower values = more cross-val folds
 #%% Calculate the best regularization parameter
 
 
-def _run_one(subject, C, data_x, data_y):
+def _run_one(subject, C, data_x, data_y, tmin, tmax):
 
     np.random.seed(misc.make_seed(subject, C))
     clf = LogisticRegressionOvaNegX(l1_ratio=1, C=C,
@@ -93,16 +97,25 @@ def _run_one(subject, C, data_x, data_y):
 
     return df, df_proba
 
-def run_gridsearch_l1(subject, overwrite=False):
+def run_gridsearch_l1(subject, condition='slow', overwrite=False):
+
+    # Validate condition parameter
+    if condition not in ['slow', 'fast']:
+        raise ValueError(f"condition must be 'slow' or 'fast', got '{condition}'")
 
     subject = f'{int(subject):02d}'
+
+    # Set acquisition name and time windows based on condition
+    acquisition = 'localizer' if condition == 'slow' else 'sequence'
+    tmin = TIME_WINDOWS[condition]['tmin']
+    tmax = TIME_WINDOWS[condition]['tmax']
 
     path_acc_pkl = BIDSPath(
         root=layout.derivatives['derivatives'].root,
         datatype='results',
         subject=subject,
-        task='main',
-        acquisition='localizer',
+        task=condition,
+        acquisition=acquisition,
         processing='gridsearch',
         extension='.csv.pkl.gz',
         suffix='accuracy',
@@ -112,8 +125,8 @@ def run_gridsearch_l1(subject, overwrite=False):
         root=layout.derivatives['derivatives'].root,
         datatype='results',
         subject=subject,
-        task='main',
-        acquisition='localizer',
+        task=condition,
+        acquisition=acquisition,
         processing='gridsearch',
         extension='.csv.pkl.gz',
         suffix='probas',
@@ -121,7 +134,7 @@ def run_gridsearch_l1(subject, overwrite=False):
     )
 
     if os.path.isfile(path_acc_pkl.fpath) and os.path.isfile(path_proba_pkl.fpath):
-        print(f'{subject=} already processed: {path_proba_pkl}')
+        print(f'{subject=} {condition=} already processed: {path_proba_pkl}')
         if overwrite:
             print('overwriting...')
         else:
@@ -129,8 +142,12 @@ def run_gridsearch_l1(subject, overwrite=False):
     else:
         path_proba_pkl.mkdir(True)
 
-    # load data once, will not change
-    data_x, data_y, _ = load_localizer(subject=subject, verbose=False)
+    # Load data based on condition
+    if condition == 'slow':
+        data_x, data_y, _ = load_localizer(subject=subject, tmin=tmin, tmax=tmax, verbose=False)
+    else:  # condition == 'fast'
+        data_x, data_y, _ = load_fast_images(subject=subject, tmin=tmin, tmax=tmax, verbose=False)
+
     data_x, data_y = decoding.stratify(data_x, data_y)
 
     # collect all results here
@@ -142,7 +159,7 @@ def run_gridsearch_l1(subject, overwrite=False):
     for iteration in tqdm(range(n_iterations), desc='iterations'):
 
         l1_values = np.linspace(*bounds, values_per_iter)
-        res =  Parallel(n_jobs=-1)(delayed(_run_one)(subject, C, data_x, data_y) for C in l1_values)
+        res =  Parallel(n_jobs=-1)(delayed(_run_one)(subject, C, data_x, data_y, tmin, tmax) for C in l1_values)
         df_acc_iter = pd.concat([r[0] for r in res], ignore_index=True)
         df_proba_iter = pd.concat([r[1] for r in res], ignore_index=True)
 
@@ -164,9 +181,13 @@ def run_gridsearch_l1(subject, overwrite=False):
     df_proba.to_pickle(path_proba_pkl)
 
     metadata_acc_file =  path_acc_pkl.copy().update(extension='.json')
-    metadata_acc = {'timepoint': 'timepoint after localizer onset',
+    metadata_acc = {'timepoint': f'timepoint after {condition} image onset',
                     'accuracy': 'cross-validated accuracy',
                     'subject': subject,
+                    'condition': condition,
+                    'acquisition': acquisition,
+                    'tmin': tmin,
+                    'tmax': tmax,
                     'C': 'l1 regularization value of LogReg',
                     'ex_per_fold': ex_per_fold,
                     'clf': str(clf),
@@ -176,9 +197,13 @@ def run_gridsearch_l1(subject, overwrite=False):
     metadata_acc_file.fpath.write_text(json.dumps(metadata_acc, indent=4))
 
     metadata_proba_file =  path_proba_pkl.copy().update(extension='.json')
-    metadata_proba = {'timepoint': 'timepoint after localizer onset',
+    metadata_proba = {'timepoint': f'timepoint after {condition} image onset',
                     'accuracy': 'cross-validated accuracy',
                     'subject': subject,
+                    'condition': condition,
+                    'acquisition': acquisition,
+                    'tmin': tmin,
+                    'tmax': tmax,
                     'C': 'l1 regularization value of LogReg',
                     'ex_per_fold': ex_per_fold,
                     'clf': str(clf),
@@ -214,16 +239,29 @@ if __name__=='__main__':
     # subject specified? run only that one
     import argparse
 
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        description='L1 regularization grid search for MEG decoding'
+    )
     parser.add_argument("--subjects",
                         type=lambda s: [f'{int(x):02d}' for x in s.split(',')],
                         help='comma-separated list of subjects',
                         default=list(range(1, 31))
                         )
+    parser.add_argument('--condition',
+                        type=str,
+                        choices=['slow', 'fast'],
+                        default=None,
+                        help="condition: 'slow' for localizer images, 'fast' for sequence images (default: both)")
     parser.add_argument('--overwrite',
                         action='store_true',
                         help='overwrite results if exist')
     args = parser.parse_args()
 
-    for subject in tqdm(args.subjects, 'running subjects cross-validation'):
-        run_gridsearch_l1(subject, overwrite=args.overwrite)
+    conditions = [args.condition] if args.condition else ['slow', 'fast']
+
+    for condition in conditions:
+        print(f'Running L1 grid search for condition: {condition}')
+        print(f'Time window: {TIME_WINDOWS[condition]["tmin"]} to {TIME_WINDOWS[condition]["tmax"]}s')
+
+        for subject in tqdm(args.subjects, f'running subjects cross-validation ({condition})'):
+            run_gridsearch_l1(subject, condition=condition, overwrite=args.overwrite)
