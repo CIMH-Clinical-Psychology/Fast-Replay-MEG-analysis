@@ -10,7 +10,7 @@ that show how decoders trained at one time point generalize to other time points
 Supports both within-condition generalization and cross-condition transfer.
 
 Input: Preprocessed MEG localizer and/or fast images data
-Output: Accuracy heatmaps as PKL files per subject and L1 parameter
+Output: Accuracy heatmaps as CSV file per subject and L1 parameter
 
 @author: simon.kern
 """
@@ -82,7 +82,6 @@ def run_generalization(subject, l1_value, source='slow', target='fast', overwrit
     tmin_target = TIME_WINDOWS[target]['tmin']
     tmax_target = TIME_WINDOWS[target]['tmax']
 
-
     path_csv = BIDSPath(
         root=layout.derivatives['derivatives'].root,
         datatype='results',
@@ -91,7 +90,7 @@ def run_generalization(subject, l1_value, source='slow', target='fast', overwrit
         processing=f'{source}2{target}',
         description=f'C{l1_value:.3f}',
         suffix='heatmap',
-        extension='.csv',
+        extension='.csv.gz',
         check=False
     )
 
@@ -162,7 +161,7 @@ def run_generalization(subject, l1_value, source='slow', target='fast', overwrit
     )
     df_heatmap.index.name = f'train_time ({source})'
     df_heatmap.columns.name = f'test_time ({target})'
-    df_heatmap.to_csv(path_csv.fpath)
+    df_heatmap.to_csv(path_csv.fpath, float_format=lambda x:f'{x:.3f}')
     print(f'Saved heatmap to: {path_csv.fpath}')
 
     # Save metadata JSON

@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=highspeed-clf-gen
+#SBATCH --job-name=generalization-highspeed
 #SBATCH --output=/zi/home/simon.kern/slurmlogs/slurm_%x_%A-%a.out
 #SBATCH --error=/zi/home/simon.kern/slurmlogs/slurm_%x_%A-%a.err
 #SBATCH --time=20:00:00
@@ -22,4 +22,5 @@ SUBJECT_IDX=$(( (SLURM_ARRAY_TASK_ID - 1) / 10 + 1 ))
 SUBJECT=$(printf "%02d" "${SUBJECT_IDX}")
 L1=${L1_VALUES[$L1_IDX]}
 
-python 1b_classifier_generalization.py --subjects "$SUBJECT" --l1 "$L1"
+# PYTHON_SCRIPT is set in setup_slurm.sh by replacing .sbatch with .py
+python "$PYTHON_SCRIPT" --subjects "$SUBJECT" --l1 "$L1"
