@@ -17,6 +17,10 @@ import time
 import psutil
 import logging
 from bids import BIDSLayout  # pip install pybids
+import seaborn as sns
+
+# this variable can be set to suppress preloading of the BIDS data
+NO_PRELOADING = os.environ.get('NO_PRELOADING')
 
 ###############################
 #%%userconf
@@ -27,7 +31,7 @@ host     = platform.node().lower()    # the name of this computer
 system   = platform.system().lower()  # linux, windows or mac.
 home = os.path.expanduser('~')
 cwd = os.path.abspath(os.getcwd())
-
+script_dir = os.path.dirname(__file__)
 
 # the following directories are needed:
 # cache_dir - temporary directory for caching and joblib
@@ -39,10 +43,10 @@ cwd = os.path.abspath(os.getcwd())
 # machine specific configuration overwrites general directory structure
 if username == 'simon.kern' and '.zi.local' in host:  # VM or cluster
     cache_dir = f'{home}/Desktop/highspeed-joblib/'
-    plot_dir = '../plots/'
     bids_dir_meg = '/zi/flstorage/group_klips/data/data/Simon/highspeed/highspeed-MEG-bids/'
     bids_dir_3T = '/zi/flstorage/group_klips/data/data/Simon/highspeed/highspeed-3T-bids/'
     bids_dir_3T_decoding = '/zi/flstorage/group_klips/data/data/Simon/highspeed/highspeed-3T-decoding/'
+    plot_dir = f'{script_dir}/../plots/'
 
 elif username == 'simon.kern' and host=='5cd320lfh8':
     cache_dir = f'{home}/Desktop/joblib-fasterplay/'
@@ -50,14 +54,14 @@ elif username == 'simon.kern' and host=='5cd320lfh8':
     bids_dir_meg = "W:/group_klips/data/data/Simon/highspeed/highspeed-MEG-bids"
     bids_dir_3T = 'W:/group_klips/data/data/Simon/highspeed/highspeed-3T-bids/'
     bids_dir_3T_decoding = 'w:/group_klips/data/data/Simon/highspeed/highspeed-3T-decoding/'
+    plot_dir = f'{script_dir}/../plots/'
 
 elif username=='simon' and host=='kubuntu':
     cache_dir = f'{home}/Desktop/joblib-fasterplay/'
-    plot_dir = '../plots/'
     # bids_dir_meg = "W:/group_klips/data/data/Simon/highspeed/highspeed-MEG-bids/"
     bids_dir_3T = bids_dir = '/home/simon/Desktop/highspeed-bids/'
     bids_dir_3T_decoding = '/home/simon/Desktop/highspeed-decoding/'
-
+    plot_dir = f'{script_dir}/../plots/'
 else:
     raise Exception(f'No user specific settings found in settings.py with {username=} and {host=}')
 
@@ -75,14 +79,9 @@ os.makedirs(cache_dir, exist_ok=True)
 
 #%% initialize MEG BIDS dir
 
-# ignore_subjects = ['16',  # massive data loss during recording
-#                    '12',  # massive data loss during recording
-#                    '21',  # moderate data loss
-#                    '22',  # massive data loss during recording
-#                    '27',  # moderate data loss
-#                    ]
-
-if 'bids_dir_meg' in locals():
+if NO_PRELOADING:
+    print('Not preloading MEG BIDS as NO_PRELOADING env var was set')
+elif 'bids_dir_meg' in locals():
     bids_dir_meg = os.path.abspath(bids_dir_meg)
     # use database for faster loading. but recreate on each python startup
     # db_path = cache_dir + '/bids_meg.db'
@@ -101,15 +100,27 @@ else:
     warnings.warn('bids_dir_MEG has not been defined in settings.py')
 
 #%% BIDS layout for 3T
-if 'bids_dir_3T' in locals():
+if NO_PRELOADING:
+    print('Not preloading fMRI BIDS as NO_PRELOADING env var was set')
+elif 'bids_dir_3T' in locals():
     bids_dir_3T = os.path.abspath(bids_dir_3T)
+    derivatives_dir_3T = os.path.join(bids_dir_3T, 'derivatives')
+    os.makedirs(derivatives_dir_3T, exist_ok=True)
+    # create dataset_description.json if missing (required by pybids for derivatives)
+    _desc_file = os.path.join(derivatives_dir_3T, 'dataset_description.json')
+    if not os.path.isfile(_desc_file):
+        import json
+        with open(_desc_file, 'w') as f:
+            json.dump({"Name": "highspeed-3T-derivatives",
+                        "BIDSVersion": "1.6.0",
+                        "GeneratedBy": [{"Name": "highspeed-MEG-analysis"}]}, f, indent=4)
     # use database for faster loading. but recreate on each python startup
     # db_path = cache_dir + '/bids_3T.db'
     # python_start = psutil.Process(os.getpid()).create_time()
     # reset_database = (os.path.getmtime(db_path) if os.path.exists(db_path) else 0) < python_start
     # if reset_database:
         # warnings.warn('resetting 3T BIDS database')
-    layout_3T = BIDSLayout(bids_dir_3T)
+    layout_3T = BIDSLayout(bids_dir_3T, derivatives=True)
     layout_3T.subjects = layout_3T.get_subjects()
     if not layout_3T.subjects:
         warnings.warn('No subjects in layout_3T, are you sure it exists?')
@@ -117,32 +128,19 @@ else:
     layout_3T = None
     warnings.warn('bids_dir_3T has not been defined in settings.py')
 
-#%% checks for stuff
+#%% BIDS decoding layout for 3T
 
-if 'cache_dir' not in locals():
-    cache_dir = f"{bids_dir}/cache/"  # used for caching
-if 'plot_dir' not in locals():
-    plot_dir = f"{bids_dir}/plots/"  # plots will be stored here
+# is this a valid BIDS directory? does not seem to be recognized
 
+# if 'bids_dir_3T_decoding' in locals():
+#     layout_3T_decoding = BIDSLayout(bids_dir_3T_decoding + '/decoding')
+#     layout_3T_decoding.subjects = layout_3T_decoding.get_subjects()
+#     if not layout_3T_decoding.subjects:
+#         warnings.warn('No subjects in layout_3T, are you sure it exists?')
+# else:
+#     layout_3T_decoding = None
+#     warnings.warn('bids_dir_3T has not been defined in settings.py')
 
-if not os.path.isdir(plot_dir):
-    warnings.warn(f"plot_dir does not exist at {plot_dir}, create")
-    os.makedirs(plot_dir, exist_ok=True)
-
-
-def get_free_space_gb(path):
-    """return the current free space in the cache dir in GB"""
-    import shutil
-
-    os.makedirs(path, exist_ok=True)
-    total, used, free = shutil.disk_usage(path)
-    total //= 1024**3
-    used //= 1024**3
-    free //= 1024**3
-    return free
-
-if get_free_space_gb(cache_dir) < 20:
-    raise RuntimeError(f"Free space for {cache_dir} is below 20GB. Cannot safely run.")
 
 #%% initializations, should need no change
 # set environment variable for `meg_utils`, where to cache function calls
@@ -150,6 +148,28 @@ os.environ['JOBLIB_CACHE_DIR'] = cache_dir
 
 #%% constants
 
+intervals_MEG = [32, 64, 128, 512]
+intervals_3T = [32, 64, 128, 512, 2048]
+
+subjects_3T = [f'{i:02d}' for i in range(1, 41)]   # 40 participants
+subjects_MEG = [f'{i:02d}' for i in range(1, 31)]  # 30 participants
+
+normalization = 'lambda x: x/x.mean(0)'  # normalization to be used on the probability vectors
+tr_duration = 1.25  # TR duration in seconds
+
+# these are the expected TRs that the forward an backward phases are occurring
+# for, taken from Wittkuhn et al (2021).
+exp_tr = {32:   {'fwd': [2, 4], 'bkw': [5, 7]},
+          64:   {'fwd': [2, 4], 'bkw': [5, 7]},
+          128:  {'fwd': [2, 4], 'bkw': [5, 8]},
+          512:  {'fwd': [2, 5], 'bkw': [6, 9]},
+          2048: {'fwd': [2, 7], 'bkw': [8, 13]}
+          }
+
+# time lags at which we expect the peak to be
+exp_lag = {interval: round((interval+100)/10) for interval in intervals_MEG}
+
+# translate trigger values from German to English
 trigger_translation = {'Gesicht': 'face',
                        'Haus': 'house',
                        'Katze': 'cat',
@@ -191,7 +211,7 @@ trigger_base_val_localizer_distractor = 100
 trigger_base_val_cue = 10
 trigger_base_val_sequence = 20
 
-
+# the beautiful color palette used in the Wittkuhn et al. 2021 publication
 palette_wittkuhn1 = [
     "#f5191c",  # soft red
     "#e78f0a",  # soft orange
@@ -207,3 +227,46 @@ palette_wittkuhn2 = [
     "#bcaf6f",  # beige
     "#ffea46",  # pale yellow
 ]
+
+color_fwd = sns.color_palette()[1]
+color_bkw = sns.color_palette()[2]
+
+
+
+
+#%% plotting settings
+import matplotlib.pyplot as plt
+
+plt.rc('font', size=14)          # default text
+plt.rc('axes', titlesize=16)     # axes title
+plt.rc('axes', labelsize=12)     # x and y labels
+plt.rc('xtick', labelsize=11)    # x tick labels
+plt.rc('ytick', labelsize=11)    # y tick labels
+plt.rc('legend', fontsize=11)    # legend
+
+
+#%% checks and safety measures
+
+if 'cache_dir' not in locals():
+    cache_dir = f"{bids_dir}/cache/"  # used for caching
+if 'plot_dir' not in locals():
+    plot_dir = f"{bids_dir}/plots/"  # plots will be stored here
+
+
+if not os.path.isdir(plot_dir):
+    warnings.warn(f"plot_dir does not exist at {plot_dir}, create")
+    os.makedirs(plot_dir, exist_ok=True)
+
+def get_free_space_gb(path):
+    """return the current free space in the cache dir in GB"""
+    import shutil
+
+    os.makedirs(path, exist_ok=True)
+    total, used, free = shutil.disk_usage(path)
+    total //= 1024**3
+    used //= 1024**3
+    free //= 1024**3
+    return free
+
+if get_free_space_gb(cache_dir) < 20:
+    raise RuntimeError(f"Free space for {cache_dir} is below 20GB. Cannot safely run.")

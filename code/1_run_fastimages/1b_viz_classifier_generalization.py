@@ -5,19 +5,23 @@ Created on Mon Feb  3 14:00:00 2026
 
 Visualize the results of the classifier generalization analysis.
 
-Plots mean heatmaps across participants for each C value and condition.
+Plots mean heatmaps across participants and L1 values for slow2slow and slow2fast.
 
 @author: simon.kern
 """
 import os
 import sys; sys.path.append('..')
-import json
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
 import seaborn as sns
 import matplotlib.pyplot as plt
+from mne.stats import permutation_cluster_1samp_test
 from bids_utils import layout_MEG as layout
+from settings import plot_dir
+from meg_utils import plotting
+from scipy import stats
+from joblib import Parallel, delayed
 
 plt.rc('font', size=14)
 plt.rc('axes', titlesize=16)
@@ -29,138 +33,131 @@ plt.rc('legend', fontsize=11)
 #%% Settings
 
 # L1 values from sbatch script
-L1_VALUES = [0.01, 0.05, 0.25, 1.0, 3, 5, 7, 10, 25, 100.0]
+L1_VALUES = [0.1, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0,
+             6.5, 7.0, 7.5, 8.0, 8.5, 9.0, 9.5, 10.0, 12.0, 14.0, 16.0, 18.0,
+             20.0, 25.0, 30.0, 40.0, 50.0]
 
-# Four conditions
-CONDITIONS = ['slow2slow', 'fast2fast', 'slow2fast', 'fast2slow']
+# Two conditions
+CONDITIONS = ['slow2slow', 'slow2fast']
 
 CONDITION_LABELS = {
     'slow2slow': 'Localizer → Localizer',
-    'fast2fast': 'Sequence → Sequence',
     'slow2fast': 'Localizer → Sequence',
-    'fast2slow': 'Sequence → Localizer',
 }
 
 #%% Load all heatmap CSVs
 
 deriv = layout.derivatives['derivatives']
 
-# Dictionary to store heatmaps: {condition: {C: [list of heatmaps per subject]}}
-heatmaps = {cond: {c: [] for c in L1_VALUES} for cond in CONDITIONS}
+# Dictionary to store heatmaps: {condition: [list of all heatmaps across subjects and L1]}
+heatmaps = {cond: [] for cond in CONDITIONS}
+
+subjects = {cond: [] for cond in CONDITIONS}
+l1_ratios = {cond: [] for cond in CONDITIONS}
+
+times = {cond: [] for cond in CONDITIONS}
 
 for cond in CONDITIONS:
     files = deriv.get(task='main',
-                      processing=cond,
-                      extension='.csv',
+                      proc=cond,
+                      extension='.csv.gz',
                       suffix='heatmap',
-                      invalid_filters='allow')
+                      )
 
     print(f'{cond}: found {len(files)} files')
 
+    # sort by subject
+    files = sorted(files, key=lambda x:int(x.entities['subject']))
+
     for f in tqdm(files, desc=f'Loading {cond}'):
-        # Extract C value from filename (description field)
-        # Filename format: ..._desc-C{value}_heatmap.csv
-        fname = os.path.basename(f.path)
-        # Parse C value from description
-        try:
-            c_str = fname.split('desc-C')[1].split('_')[0]
-            c_val = float(c_str)
-        except (IndexError, ValueError):
-            print(f'Could not parse C value from {fname}')
-            continue
-
-        # Round to match L1_VALUES
-        c_val_rounded = min(L1_VALUES, key=lambda x: abs(x - c_val))
-
         # Load heatmap
+        l1 = float(f.entities['desc'][1:].replace('p', '.'))
+        subj = f.entities['subject']
         df = pd.read_csv(f.path, index_col=0)
-        heatmaps[cond][c_val_rounded].append(df.values)
 
-#%% Plot mean heatmap for each C value and condition
+        subjects[cond] += [subj]
+        l1_ratios[cond] += [l1]
+        heatmaps[cond] += [df]
 
-for cond in CONDITIONS:
-    n_c = len(L1_VALUES)
-    n_cols = 5
-    n_rows = int(np.ceil(n_c / n_cols))
+    heatmaps[cond] = np.array(heatmaps[cond])
+    l1_ratios[cond] = np.array(l1_ratios[cond])
+    subjects[cond] = np.array(subjects[cond])
+    times[cond] = {'index': df.index, 'columns': df.columns}
+    times[cond]['columns'].name = 'test_time ' + ('(slow)' if cond=='slow2slow' else '(fast)')
 
-    fig, axs = plt.subplots(n_rows, n_cols, figsize=[16, 3.5*n_rows])
-    axs = axs.flatten()
+#%% Precompute all clusters with joblib.Parallel
 
-    for i, c_val in enumerate(L1_VALUES):
+def compute_cluster(l1, cond, heatmaps, l1_ratios):
+    """Compute cluster permutation test for a given (l1, cond) combination."""
+    sel = l1_ratios[cond] == l1
+    data = np.stack(heatmaps[cond][sel], axis=0)
+
+    t_thresh = stats.distributions.t.ppf(1 - 0.05, df=len(data) - 1)
+
+    t_obs, clusters, cluster_pv, H0 = permutation_cluster_1samp_test(
+        stats.zscore(data, axis=None), n_permutations=1000, tail=1,
+        threshold=t_thresh, n_jobs=4, seed=42, out_type='mask', verbose='WARNING'
+    )
+    return (l1, cond), (clusters, cluster_pv)
+
+# Build list of all (l1, cond) combinations
+jobs = [(l1, cond) for l1 in np.unique(l1_ratios['slow2slow']) for cond in CONDITIONS]
+
+# Run all cluster computations in parallel
+print(f'Precomputing {len(jobs)} cluster permutation tests...')
+results = Parallel(n_jobs=-1, verbose=10)(
+    delayed(compute_cluster)(l1, cond, heatmaps, l1_ratios) for l1, cond in tqdm(jobs)
+)
+
+# Store results in dict for fast lookup
+cluster_results = dict(results)
+
+#%% Plot 1x2 mean heatmap with precomputed clusters
+
+fig, axs = plt.subplots(1, 2, figsize=[16, 6])
+
+for j, l1 in enumerate(tqdm(np.unique(l1_ratios['slow2slow']))):
+    for i, cond in enumerate(CONDITIONS):
+
         ax = axs[i]
+        ax.clear()
 
-        if len(heatmaps[cond][c_val]) == 0:
-            ax.set_title(f'C={c_val} (no data)')
-            ax.axis('off')
-            continue
+        # select all heatmaps for that l1 ratio
+        sel = l1_ratios[cond]==l1
 
-        # Compute mean heatmap across participants
-        mean_heatmap = np.mean(heatmaps[cond][c_val], axis=0)
-        n_subj = len(heatmaps[cond][c_val])
+        # Stack all heatmaps: shape (n_observations, train_time, test_time)
+        data = np.stack(heatmaps[cond][sel], axis=0)
+        n_obs = data.shape[0]
+
+        # Compute mean heatmap
+        mean_heatmap = pd.DataFrame(np.mean(data, axis=0),
+                                    index=times[cond]['index'],
+                                    columns=times[cond]['columns'],
+                                    )
 
         # Plot heatmap
-        sns.heatmap(mean_heatmap, ax=ax, cmap='RdBu_r', center=0.2,
-                    vmin=0, vmax=1, cbar=True,
-                    xticklabels=False, yticklabels=False)
-        ax.set_title(f'C={c_val} (n={n_subj})')
-        ax.set_xlabel('Test time')
-        ax.set_ylabel('Train time')
+        sns.heatmap(mean_heatmap, ax=ax, cmap='viridis', center=0.2,
+                        vmin=0, vmax=0.6, cbar=True if j==0 else False)
+        ax.invert_yaxis()
+
+        # Retrieve precomputed cluster results
+        clusters, cluster_pv = cluster_results[(l1, cond)]
+
+        # Create significance mask from significant clusters (p < 0.05)
+        sig_mask = np.zeros(mean_heatmap.shape, dtype=bool)
+        for cluster, pval in zip(clusters, cluster_pv):
+            if pval < 0.05:
+                sig_mask = sig_mask | cluster
+
+        # Highlight significant clusters
+        if sig_mask.any():
+            plotting.highlight_cells(sig_mask, ax, color='darkred', linewidth=1)
+
+        plt.suptitle(f'Generalization - {l1=:.1f}')
+        ax.set_title(f'{CONDITION_LABELS[cond]}\n(n={n_obs})')
 
         # Add diagonal line
-        ax.plot([0, mean_heatmap.shape[1]], [0, mean_heatmap.shape[0]],
-                'k--', alpha=0.5, linewidth=1)
 
-    # Hide unused subplots
-    for i in range(n_c, len(axs)):
-        axs[i].set_visible(False)
-
-    fig.suptitle(f'{CONDITION_LABELS[cond]} - Mean heatmap per C value')
-    plt.tight_layout()
-    plt.savefig(f'heatmap_mean_{cond}.png', dpi=150)
-
-#%% Summary plot: 4 conditions x best C value
-
-# Find best C for each condition based on mean accuracy
-best_c_per_cond = {}
-for cond in CONDITIONS:
-    best_acc = -1
-    best_c = None
-    for c_val in L1_VALUES:
-        if len(heatmaps[cond][c_val]) > 0:
-            mean_acc = np.mean([h.mean() for h in heatmaps[cond][c_val]])
-            if mean_acc > best_acc:
-                best_acc = mean_acc
-                best_c = c_val
-    best_c_per_cond[cond] = best_c
-    print(f'{cond}: best C={best_c} (mean acc={best_acc:.3f})')
-
-# Plot 2x2 grid of best heatmaps
-fig, axs = plt.subplots(2, 2, figsize=[12, 10])
-axs = axs.flatten()
-
-for i, cond in enumerate(CONDITIONS):
-    ax = axs[i]
-    c_val = best_c_per_cond[cond]
-
-    if c_val is None or len(heatmaps[cond][c_val]) == 0:
-        ax.set_title(f'{CONDITION_LABELS[cond]}\n(no data)')
-        ax.axis('off')
-        continue
-
-    mean_heatmap = np.mean(heatmaps[cond][c_val], axis=0)
-    n_subj = len(heatmaps[cond][c_val])
-
-    sns.heatmap(mean_heatmap, ax=ax, cmap='RdBu_r', center=0.2,
-                vmin=0, vmax=1, cbar=True,
-                xticklabels=False, yticklabels=False)
-    ax.set_title(f'{CONDITION_LABELS[cond]}\nBest C={c_val} (n={n_subj})')
-    ax.set_xlabel('Test time')
-    ax.set_ylabel('Train time')
-    ax.plot([0, mean_heatmap.shape[1]], [0, mean_heatmap.shape[0]],
-            'k--', alpha=0.5, linewidth=1)
-
-fig.suptitle('Best heatmaps per condition')
-plt.tight_layout()
-plt.savefig('heatmap_best_per_condition.png', dpi=150)
-
-print('\nDone!')
+        ax.plot([0, min(mean_heatmap.shape)], [0, min(mean_heatmap.shape)],
+                'k--', alpha=0.35, linewidth=0.5)
+        plotting.savefig(fig, f'{plot_dir}/transfer/heatmap_transfer_{str(l1).replace(".", "p")}.png', dpi=150)

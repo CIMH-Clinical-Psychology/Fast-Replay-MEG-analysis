@@ -12,7 +12,8 @@ different parameter combinations:
     - "subj": using subject-specific best L1 and timepoint
 
 Input: Gridsearch CSVs from 1a, preprocessed MEG data
-Output: Final classifier per participant (saved as pkl)
+Output: - Final classifier per participant (saved as pkl)
+        - csv per participant with probabilities of the sequence
 
 @author: simon.kern
 """
@@ -68,11 +69,11 @@ best_params = {}
 for subj, df_subj in df_acc.groupby('subject'):
     # Best C: highest mean accuracy across all timepoints
     mean_acc_per_C = df_subj.groupby('C').accuracy.mean()
-    best_C = mean_acc_per_C.idxmax().round()
+    best_C = mean_acc_per_C.idxmax()
 
     # Best timepoint: highest mean accuracy across all C values
     mean_acc_per_t = df_subj.groupby('timepoint').accuracy.mean()
-    best_t = mean_acc_per_t.idxmax()
+    best_t = round(mean_acc_per_t.idxmax()*2)/2
 
     # Also get the timepoint index
     best_t_idx = np.where(timepoints == best_t)[0][0]

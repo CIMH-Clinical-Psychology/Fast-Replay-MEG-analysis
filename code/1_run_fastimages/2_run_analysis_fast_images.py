@@ -3,10 +3,11 @@
 """
 Created on Mon Nov 25 16:40:24 2024
 
-simply visualize the fast sequences both for MEG and fMRI
+simply visualize the individual images of the fast images
 
 @author: simon.kern
 """
+import sys; sys.path.append('..')
 import mne
 from tqdm import tqdm
 import pandas as pd
@@ -19,80 +20,112 @@ from meg_utils import plotting
 import matplotlib.pyplot as plt
 from meg_utils.plotting import savefig, normalize_lims
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
-stop
+from meg_utils import misc
 
+round_to_base = lambda data, base: np.round(data / base) * base
 
-#%% full sequence probabilities
-from scipy.stats import zscore
+subjects_fmri = [f'{i:02d}' for i in range(1, 41)]
+subjects_fmri = [f'{i:02d}' for i in range(1, 31)]
 
-normalization = 'lambda x: np.log(x)/np.log(x).mean(0)'
-normalization = 'lambda x: x/x.mean(0)'
-# normalization = 'lambda x: zscore(x, axis=0)'
+#%% MEG accuracies
+df_meg_acc = pd.DataFrame()
+df_meg_proba = pd.DataFrame()
 
-
-df = pd.DataFrame()
-for subject in tqdm(settings.layout.subjects):
+for subject in tqdm(layout_MEG.subjects):
 
     clf = bids_utils.load_latest_classifier(subject)
-    data_x, data_y, df_beh = bids_utils.load_fast_sequences(subject)
+    data_x, data_y, df_beh = bids_utils.load_fast_images(subject)
 
-    probas = np.swapaxes([clf.predict_proba(data_x[:, :, t]) for t in range(data_x.shape[-1])], 0, 1)
-    df_subj = pd.DataFrame()
-    timepoint = np.hstack([np.arange(data_x.shape[-1])*10]*5)-200
-    stimulus = np.repeat(np.arange(5), probas.shape[1])
-    probas = eval(normalization)(probas)
+    proba = np.swapaxes([clf.predict_proba(data_x[:, :, t]) for t in range(data_x.shape[-1])], 0, 1)
+    preds = np.argmax(proba, -1)
 
-    for proba, df_trial in zip(probas, df_beh):
-        # proba /= proba.mean(0)
-        # proba = np.log(proba)
-        pos_idx = [list(df_trial.trigger).index(i) for i in  range(5)]
-        position = np.repeat(pos_idx, probas.shape[1])
-        df_tmp = pd.DataFrame({'proba': proba.ravel('F'),
-                               'stimulus': stimulus,
-                               'timepoint': timepoint,
-                               'position': position,
-                               'interval': df_trial.interval_time.iloc[0],
-                               'subject': subject})
-        df_subj = pd.concat([df_subj, df_tmp])
-    df_subj = df_subj.groupby(['timepoint', 'interval', 'position']).mean(True).reset_index()
-    # sns.lineplot(df_subj, x='timepoint', y='proba', hue='interval')
-    df = pd.concat([df, df_subj], ignore_index=True)
+    accs = (preds.T==data_y).T
 
-plt.rcParams.update({'font.size':14})
-fig, axs = plt.subplots(1, 4, figsize=[16, 4])
-axs = axs.flatten()
+    df_subj = misc.to_long_df(accs, columns=['trial', 'timepoint'],
+                              value_name='accuracy',
+                              timepoint=np.arange(-200, 510, 10),
+                              trial={'interval': df_beh.interval_time.astype(int),
+                                     'serial_position': df_beh.serial_position.astype(int),
+                                     'stimulus': df_beh.trigger.astype(int)})
+    df_subj = df_subj.groupby(['timepoint', 'interval', 'serial_position', 'stimulus']).mean().reset_index()
+    df_subj['subject'] = subject
 
-for i, interval in enumerate(df.interval.unique()):
-    df_sel = df[df.interval==interval]
-    ax = axs[i]
-    sns.lineplot(df_sel, x='timepoint', y='proba', hue='position', palette=settings.palette_wittkuhn1,
-                 ax=ax, legend=False)
-    ax.vlines(np.arange(5)* (100+interval), *ax.get_ylim(), linewidth=0.5, color='black', alpha=0.3)
-    # ax.set_xlim(-200, interval*5+750)
-    if i>0:
-        ax.set_ylabel('')
-    for ax in axs:
-        ax.set_xticks(np.arange(0, 3000, 500), np.arange(0, 3000, 500)/1000)
-        ax.set_xlabel('timepoint (s)')
-    ax.set_title(f'{int(interval)} ms')
-    plt.pause(0.1)
+    df_proba = misc.to_long_df(proba, columns=['trial', 'timepoint', 'classifier'],
+                               value_name='probability', classifier=settings.categories,
+                               timepoint=np.arange(-200, 510, 10),
+                               trial={'interval': df_beh.interval_time.astype(int),
+                                      'serial_position': df_beh.serial_position.astype(int),
+                                      'stimulus': df_beh.trigger.astype(int)})
+    df_proba['subject'] = subject
 
-fig.legend(
-    ['1', '_', '2', '_', '3', '_', '4', '_', '5'],
-    title='item position',
-    loc='center right',
-    bbox_to_anchor=(0.96, 0.6),  # 1.02 puts it just outside the right edge, 0.5 is vertical center
-    bbox_transform=fig.transFigure
-)
-plotting.normalize_lims(axs)
+    df_meg_acc = pd.concat([df_meg_acc, df_subj], ignore_index=True)
+    df_meg_proba = pd.concat([df_meg_proba, df_proba], ignore_index=True)
 
+df_meg_acc['stimulus'] = df_meg_acc['stimulus'].apply(lambda x: settings.categories[x])
+df_meg_proba['stimulus'] = df_meg_proba['stimulus'].apply(lambda x: settings.categories[x])
+
+#%% fMRI data loading
+df_fmri_proba = pd.DataFrame()
+for subject in tqdm(subjects_fmri):
+    df_subj = bids_utils.load_decoding_fast_images_3T(subject)
+    df_fmri_proba = pd.concat([df_fmri_proba, df_subj], ignore_index=True)
+
+# remove slow condition (this is not the oddball)
+df_fmri_proba = df_fmri_proba[df_fmri_proba.interval<2048]
+
+#%% normalize probabilities
+# we need to normalize the probabilities per subject, per classifier
+
+for (subj, cat), df_sel in df_meg_proba.groupby(['subject', 'classifier']):
+    mean_proba = df_sel['probability'].mean()
+    df_sel['probability'] = df_sel['probability'] / mean_proba
+
+for (subj, cat), df_sel in df_fmri_proba.groupby(['subject', 'classifier']):
+    mean_proba = df_sel['probability'].mean()
+    df_sel['probability'] = df_sel['probability'] / mean_proba
+
+df_fmri_proba['timepoint'] = df_fmri_proba['tr_onset']
+df_fmri_proba['stimulus'] = df_fmri_proba['stim']
+
+#%% plot probability variants
+
+fig, axs = plt.subplots(2, 2, figsize=[12, 8])
+
+for i, df in enumerate([df_meg_proba, df_fmri_proba]):
+    cond = ['MEG', 'fMRI'][i]
+
+    df = df.copy()  # prevent overwriting of original values
+    if cond=='MEG':  # convert to seconds
+        df.timepoint = df.timepoint/1000
+    elif cond=='fMRI':  # round to prevent jitter
+        df.timepoint = round_to_base(df.timepoint, 0.5)
+
+    # only show from 0 to 10 seconds (MEG goes until 0.5 anyway)
+    df = df[df.timepoint>=0]
+    df = df[df.timepoint<=10]
+
+    # only subselect classifiers for the current image being shown
+    df = df[df.stimulus==df.classifier]
+    ax = axs[i, 0]
+    sns.lineplot(df, x='timepoint', y='probability', hue='serial_position',
+                 palette=settings.palette_wittkuhn2, ax=ax)
+    ax.legend(title='sequence position', loc='upper right')
+
+    ax = axs[i, 1]
+    sns.lineplot(df, x='timepoint', y='probability', hue='interval',
+                 palette=settings.palette_wittkuhn2, ax=ax)
+    ax.legend(title='interval', loc='upper right')
+
+    axs[i, 0].set(title='Serial Position')
+    axs[i, 1].set(title='Interval Speed')
+
+    axs[i, 0].set(ylabel=f'{cond}\nProbability (normalized)',
+                  xlabel='time after stim onset (s)')
+    axs[i, 1].set(ylabel=f'{cond}\nProbability (normalized)',
+                  xlabel='time after stim onset (s)')
+fig.suptitle('Decoding Fast Images Individually')
+plotting.savefig(fig, f'{settings.plot_dir}/figures/fast_images_decoding.png')
 asd
-fig.tight_layout(rect=[0, 0, 0.86, 1])  # leave space on the right for the legend
-
-fig.savefig(settings.plot_dir + f'fast_images_sequence_zscore.png')
-
-
-
 #%% individual images probability visualized
 
 df = pd.DataFrame()
@@ -162,35 +195,3 @@ sns.lineplot(df, x='timepoint', y='proba', hue='interval',style='label',
 ax.set_title(f'Fast images decoding, n={len(df.subject.unique())}')
 fig.savefig(settings.plot_dir + f'fast_images_decoding_all.png')
 plt.pause(0.1)
-
-
-#%% decode individual fast images
-
-normalization = 'lambda x: x/x.mean(0)'
-# normalization = 'lambda x: zscore(x, axis=0)'
-
-
-df = pd.DataFrame()
-for subject in tqdm(settings.layout.subjects):
-
-    clf = bids_utils.load_latest_classifier(subject)
-    data_x, data_y, df_beh = bids_utils.load_fast_sequences(subject)
-
-    probas = np.swapaxes([clf.predict_proba(data_x[:, :, t]) for t in range(data_x.shape[-1])], 0, 1)
-    df_subj = pd.DataFrame()
-    timepoint = np.hstack([np.arange(data_x.shape[-1])*10]*5)-200
-    position = np.repeat(np.arange(5), probas.shape[1])
-    for proba, df_trial in zip(probas, df_beh):
-        # proba /= proba.mean(0)
-        proba = eval(normalization)(proba)
-        stimulus = np.repeat(df_trial.trigger, probas.shape[1])
-        df_tmp = pd.DataFrame({'proba': proba.ravel('F'),
-                               'stimulus': stimulus,
-                               'timepoint': timepoint,
-                               'position': position,
-                               'interval': df_trial.interval_time.iloc[0],
-                               'subject': subject})
-        df_subj = pd.concat([df_subj, df_tmp])
-    df_subj = df_subj.groupby(['timepoint', 'interval', 'position', 'stimulus']).mean(True).reset_index()
-    # sns.lineplot(df_subj, x='timepoint', y='proba', hue='interval')
-    df = pd.concat([df, df_subj], ignore_index=True)

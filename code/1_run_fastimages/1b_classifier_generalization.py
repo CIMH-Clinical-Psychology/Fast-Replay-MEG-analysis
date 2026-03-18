@@ -88,7 +88,7 @@ def run_generalization(subject, l1_value, source='slow', target='fast', overwrit
         subject=subject,
         task='main',
         processing=f'{source}2{target}',
-        description=f'C{l1_value:.3f}',
+        description=f'C{l1_value:.3f}'.replace('.', 'p'),
         suffix='heatmap',
         extension='.csv.gz',
         check=False

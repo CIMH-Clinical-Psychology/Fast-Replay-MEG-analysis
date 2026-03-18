@@ -61,6 +61,108 @@ for subject in tqdm(layout_MEG.subjects):
     # sns.lineplot(df_subj, x='timepoint', y='proba', hue='interval')
     df_meg = pd.concat([df_meg, df_subj], ignore_index=True)
 
+#%% decode individual fast images
+
+normalization = 'lambda x: x/x.mean(0)'
+# normalization = 'lambda x: zscore(x, axis=0)'
+
+df = pd.DataFrame()
+for subject in tqdm(settings.layout.subjects):
+
+    clf = bids_utils.load_latest_classifier(subject)
+    data_x, data_y, df_beh = bids_utils.load_fast_sequences(subject)
+
+    probas = np.swapaxes([clf.predict_proba(data_x[:, :, t]) for t in range(data_x.shape[-1])], 0, 1)
+    df_subj = pd.DataFrame()
+    timepoint = np.hstack([np.arange(data_x.shape[-1])*10]*5)-200
+    position = np.repeat(np.arange(5), probas.shape[1])
+    for proba, df_trial in zip(probas, df_beh):
+        # proba /= proba.mean(0)
+        proba = eval(normalization)(proba)
+        stimulus = np.repeat(df_trial.trigger, probas.shape[1])
+        df_tmp = pd.DataFrame({'proba': proba.ravel('F'),
+                               'stimulus': stimulus,
+                               'timepoint': timepoint,
+                               'position': position,
+                               'interval': df_trial.interval_time.iloc[0],
+                               'subject': subject})
+        df_subj = pd.concat([df_subj, df_tmp])
+    df_subj = df_subj.groupby(['timepoint', 'interval', 'position', 'stimulus']).mean(True).reset_index()
+    # sns.lineplot(df_subj, x='timepoint', y='proba', hue='interval')
+    df = pd.concat([df, df_subj], ignore_index=True)
+
+
+#%% full sequence probabilities
+from scipy.stats import zscore
+
+normalization = 'lambda x: np.log(x)/np.log(x).mean(0)'
+normalization = 'lambda x: x/x.mean(0)'
+# normalization = 'lambda x: zscore(x, axis=0)'
+
+
+df = pd.DataFrame()
+for subject in tqdm(settings.layout.subjects, 'getting fast image accuracies'):
+
+    clf = bids_utils.load_latest_classifier(subject)
+    data_x, data_y, df_beh = bids_utils.load_fast_sequences(subject)
+
+    probas = np.swapaxes([clf.predict_proba(data_x[:, :, t]) for t in range(data_x.shape[-1])], 0, 1)
+    df_subj = pd.DataFrame()
+    timepoint = np.hstack([np.arange(data_x.shape[-1])*10]*5)-200
+    stimulus = np.repeat(np.arange(5), probas.shape[1])
+    probas = eval(normalization)(probas)
+
+    for proba, df_trial in zip(probas, df_beh):
+        # proba /= proba.mean(0)
+        # proba = np.log(proba)
+        pos_idx = [list(df_trial.trigger).index(i) for i in  range(5)]
+        position = np.repeat(pos_idx, probas.shape[1])
+        df_tmp = pd.DataFrame({'proba': proba.ravel('F'),
+                               'stimulus': stimulus,
+                               'timepoint': timepoint,
+                               'position': position,
+                               'interval': df_trial.interval_time.iloc[0],
+                               'subject': subject})
+        df_subj = pd.concat([df_subj, df_tmp])
+    df_subj = df_subj.groupby(['timepoint', 'interval', 'position']).mean(True).reset_index()
+    # sns.lineplot(df_subj, x='timepoint', y='proba', hue='interval')
+    df = pd.concat([df, df_subj], ignore_index=True)
+
+plt.rcParams.update({'font.size':14})
+fig, axs = plt.subplots(1, 4, figsize=[16, 4])
+axs = axs.flatten()
+
+for i, interval in enumerate(df.interval.unique()):
+    df_sel = df[df.interval==interval]
+    ax = axs[i]
+    sns.lineplot(df_sel, x='timepoint', y='proba', hue='position', palette=settings.palette_wittkuhn1,
+                 ax=ax, legend=False)
+    ax.vlines(np.arange(5)* (100+interval), *ax.get_ylim(), linewidth=0.5, color='black', alpha=0.3)
+    # ax.set_xlim(-200, interval*5+750)
+    if i>0:
+        ax.set_ylabel('')
+    for ax in axs:
+        ax.set_xticks(np.arange(0, 3000, 500), np.arange(0, 3000, 500)/1000)
+        ax.set_xlabel('timepoint (s)')
+    ax.set_title(f'{int(interval)} ms')
+    plt.pause(0.1)
+
+fig.legend(
+    ['1', '_', '2', '_', '3', '_', '4', '_', '5'],
+    title='item position',
+    loc='center right',
+    bbox_to_anchor=(0.96, 0.6),  # 1.02 puts it just outside the right edge, 0.5 is vertical center
+    bbox_transform=fig.transFigure
+)
+plotting.normalize_lims(axs)
+
+
+fig.tight_layout(rect=[0, 0, 0.86, 1])  # leave space on the right for the legend
+
+fig.savefig(settings.plot_dir + f'fast_images_sequence_zscore.png')
+
+
+
 #%% MEG individual fast images decoding
 df_meg_single = pd.DataFrame()
 

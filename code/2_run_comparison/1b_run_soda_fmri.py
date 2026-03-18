@@ -13,6 +13,7 @@ import joblib
 import mne
 import soda  # SODA-python
 import tdlm
+from scipy.stats import ttest_1samp
 
 from tqdm import tqdm
 import numpy as np
@@ -24,6 +25,7 @@ from bids import BIDSLayout
 from joblib import Parallel, delayed
 from scipy.stats import pearsonr, zscore
 from mne_bids import BIDSPath
+from mne.stats import permutation_t_test
 
 from meg_utils import misc
 from meg_utils import decoding, plotting, sigproc
@@ -39,16 +41,15 @@ from settings import intervals_3T as intervals
 
 #%% settings
 
-# bids_base = BIDSPath(
-#     root=layout.derivatives['derivatives'].root,
-#     datatype='results',
-#     subject='group',
-#     task='main',
-#     check=False
-# )
 
-# pkl_seq = bids_base.copy().update(processing='trials', suffix='sequenceness', extension='.pkl.gz')
-
+bids_base = BIDSPath(
+    root=layout.derivatives['derivatives'].root,
+    datatype='results',
+    subject='group',
+    task='main',
+    check=False
+)
+bids_base.mkdir(True)
 #%% run SODA on sequence trials
 
 df_slopes = pd.DataFrame()
@@ -88,27 +89,27 @@ for subject in tqdm(subjects, desc='loading decoding results'):
 
     df_slopes = pd.concat([df_slopes, df_subj], ignore_index=True)
 
+# annotate slope forward and backward period
+df_slopes['period'] = None
+for interval in intervals:
+    for period in ['fwd', 'bkw']:
+        trs = settings.exp_tr[interval][period]
+        tr_range = list(range(trs[0], trs[1]+1))
+        sel = (df_slopes.interval==interval) & df_slopes.tr.isin(tr_range)
+        df_slopes.loc[sel, 'period'] = period
+
 #%% group-level: slope curves and signflip permutations
 
+pkl_slopes = str(bids_base.copy().update(processing='soda', suffix='slopes', extension='.pkl.gz'))
+joblib.dump(df_slopes, pkl_slopes)
 
-# build slopes_mean: dict mapping interval -> [n_subj, n_trs] array
-slopes_mean = {}
-for interval in intervals:
-    df_iv = df_slopes[df_slopes.interval == interval]
-    subj_slopes = []
-    for subject in subjects:
-        df_s = df_iv[df_iv.subject == subject]
-        mean_slope = df_s.groupby('tr')['slope'].mean().sort_index().values
-        subj_slopes.append(mean_slope)
-    slopes_mean[interval] = np.array(subj_slopes)
-
-fig, axs = plt.subplots(3, 5, figsize=[18, 7])
+fig, axs = plt.subplots(3, 5, figsize=[18, 9])
 
 df_mean = df_slopes.groupby(['tr', 'interval', 'subject']).mean(True).reset_index()
 
-for i, interval in enumerate(intervals):
+df_perm = pd.DataFrame()
 
-    tr_axis = np.arange(1, 14)
+for i, interval in enumerate(intervals):
 
     tr_fwd = settings.exp_tr[interval]['fwd']
     tr_bkw= settings.exp_tr[interval]['bkw']
@@ -117,60 +118,157 @@ for i, interval in enumerate(intervals):
     ax = axs[0, i]
 
     df_sel = df_mean[df_mean.interval==interval]
-    sns.lineplot(df_sel, x='tr', y='slope', color=settings.palette_wittkuhn2[i], ax=ax)
-
+    sns.lineplot(df_sel, x='tr', y='slope', color=settings.palette_wittkuhn2[i],
+                 ax=ax)
+    ax.set_xticks(np.arange(1, 14))
     ax.axhline(0, linestyle='--', c='black', alpha=0.4)
-    ax.axvspan(*tr_fwd, color=sns.color_palette()[1], linewidth=1, alpha=0.1,
-               label=f'fwd TR={tr_fwd}')
-    ax.axvspan(*tr_bkw, color=sns.color_palette()[2], linewidth=1, alpha=0.1,
-               label=f'bkw TR={tr_bkw}')
+    ax.axvspan(*tr_fwd, color=sns.color_palette()[1], linewidth=1, alpha=0.2,
+               label=f'fwd')
+    ax.axvspan(*tr_bkw, color=sns.color_palette()[2], linewidth=1, alpha=0.2,
+               label=f'bkw')
 
     ax.set_title(f'{interval=} s')
     ax.legend()
     if i>0:
         ax.set_ylabel('')
 
-
-    # bottom: signflip permutation test for forward
-    ax = axs[1, i]
     slopes = misc.long_df_to_array(df_sel, 'slope',  columns=['subject', 'tr'])
-    slopes = slopes[:, tr_fwd[0]-1: tr_fwd[1]].mean(1)  # subselect forward period
-    p, t_obs, t_perms = soda.signflip_test_slopes(slopes, n_perms=1000, rng=i, alternative='greater')
-    warnings.warn('WRONG T_OBS TAKEN')
-    tdlm.plot_tval_distribution(t_obs, t_perms, color=sns.color_palette()[1], thresholds=[0.05, 0.001], ax=ax)
+    slopes_bkw = slopes[:, tr_bkw[0]-1: tr_bkw[1]+1] # subselect backward period
+    slopes_fwd = slopes[:, tr_fwd[0]-1: tr_fwd[1]]   # subselect forward period
+
+    # middle: signflip permutation test for forward
+    ax = axs[1, i]
+    t_obs_fwd, p_fwd, t_perms_fwd = permutation_t_test(slopes_fwd, tail=1, seed=i, verbose=0)
+    tdlm.plot_tval_distribution(max(t_obs_fwd), t_perms_fwd, color=sns.color_palette()[1],
+                                alternative='greater', bins=100, ax=ax)
     ax.set_title('forward period t-val dist')
 
-    # bottom: signflip permutation test for bakcward
+    # bottom: signflip permutation test for backward
     ax = axs[2, i]
-    slopes = misc.long_df_to_array(df_sel, 'slope',  columns=['subject', 'tr'])
-    slopes = slopes[:, tr_bkw[0]-1: tr_bkw[1]+1].mean(1)  # subselect backward period
-    p, t_obs, t_perms = soda.signflip_test_slopes(slopes, n_perms=1000, rng=i, alternative='greater')
-    tdlm.plot_tval_distribution(t_obs*-1, t_perms*-1, color=sns.color_palette()[2], ax=ax)
+    t_obs_bkw, p_bkw, t_perms_bkw = permutation_t_test(slopes_bkw, tail=-1, seed=i, verbose=0)
+    tdlm.plot_tval_distribution(min(t_obs_bkw), t_perms_bkw, color=sns.color_palette()[2],
+                                alternative='less', bins=100, ax=ax)
+    ax.legend(loc='upper left')
     ax.set_title('backward period t-val dist')
 
+    df_perm = pd.concat([df_perm, pd.DataFrame({
+        'interval': [interval, interval],
+        'direction': ['forward', 'backward'],
+        'p_value': [min(p_fwd), min(p_bkw)],
+        't_obs': [max(t_obs_fwd), min(t_obs_bkw)],
+    })], ignore_index=True)
+
+pkl_perm = str(bids_base.copy().update(processing='soda', suffix='permutations', extension='.pkl.gz'))
+joblib.dump(df_perm, pkl_perm)
+print(df_perm.to_string(index=False))
+
 plotting.normalize_lims(axs[0])
-plotting.normalize_lims(axs[1:3])
+# plotting.normalize_lims(axs[1])
+# plotting.normalize_lims(axs[2])
 
 fig.suptitle('fMRI SODA: Slopes during fast sequence presentation')
 savefig(fig, settings.plot_dir + '/figures/soda_slopes_all.png')
 
-#%% slopes of participants as heatmap
+stop
+
+
+#%% group-level: bootstrap participants
+
+n_iv = len(intervals)
+df_mean = df_slopes.groupby(['tr', 'interval', 'subject']).mean(True).reset_index()
+pkl_power_group = str(bids_base.copy().update(processing='soda', suffix='powergroup', extension='.pkl.gz'))
+
+def bootstrap_group(slopes, n_samples, n_draws=1000, rng=None):
+    n_subj = len(slopes)
+    rng = np.random.default_rng(rng)
+    all_idx = rng.integers(0, n_subj, (n_draws, n_samples))
+
+    ps = []
+    for i in range(n_draws):
+        slopes_sampled = slopes[all_idx[i]]
+        t_obs, p, t_perms = permutation_t_test(slopes_sampled, tail=1, seed=i, verbose=0)
+        ps.append(min(p))
+    return ps
+
+df_power = pd.DataFrame()
+for i, interval in enumerate(tqdm(intervals, desc='bootstrapping group level')):
+    tr_fwd = settings.exp_tr[interval]['fwd']
+    tr_bkw = settings.exp_tr[interval]['bkw']
+
+    df_sel = df_mean[df_mean.interval == interval]
+    slopes = misc.long_df_to_array(df_sel, 'slope', columns=['subject', 'tr'])
+    slopes_fwd = slopes[:, tr_fwd[0]-1:tr_fwd[1]]  # subselect forward period
+    slopes_bkw = slopes[:, tr_bkw[0]-1:tr_bkw[1]]  # subselect backward period
+
+    res1 = Parallel(n_jobs=4)(delayed(bootstrap_group)(slopes_fwd, n, rng=n) for n in tqdm(range(2, 80)))
+    res2 = Parallel(n_jobs=4)(delayed(bootstrap_group)(slopes_bkw*-1, n, rng=n) for n in tqdm(range(2, 80)))
+
+    power_fwd = [(np.array(p) < 0.05).mean() for p in res1]
+    power_bkw = [(np.array(p) < 0.05).mean() for p in res2]
+
+    df_tmp = pd.DataFrame({'power': power_fwd + power_bkw,
+                           'period': ['fwd']* len(power_fwd) + ['bkw']*len(power_bkw),
+                           'interval': interval,
+                           'n_samples': list(range(2, 80)) * 2})
+
+    df_power = pd.concat([df_power, df_tmp], ignore_index=True)
+
+joblib.dump(df_power, pkl_power_group)
+
+df_power = joblib.load(pkl_power_group)
+
+fig, axs = plt.subplots(2, n_iv, figsize=[4 * n_iv, 5], sharey=True, sharex=True)
+for i, interval in enumerate(intervals):
+    for j, period in enumerate(['fwd', 'bkw']):
+        df_sel = df_power[(df_power.interval==interval) & (df_power.period==period)]
+        n_sign = (df_sel.n_samples.iloc[(df_sel.power > 0.8).argmax()]
+                  if (df_sel.power > 0.8).any() else np.nan)
+
+        ax = axs[j, i]
+        sns.lineplot(df_sel, x='n_samples', y='power', ax=ax)
+        ax.axhline(0.8, c='gray', alpha=0.7, linestyle='--')
+        if not np.isnan(n_sign):
+            ax.axvline(n_sign, c='darkred', alpha=0.7, linestyle='--')
+            ax.text(n_sign + 1, 0.7, f'n={n_sign:.0f}', c='darkred')
+        ax.set(title=f'{interval=} ms, {period}',
+               ylabel='power\n(% significant)',
+               xlabel='bootstrapped sample size')
+
+fig.suptitle('Bootstrapped power analysis, resampled participants, forward period only')
+savefig(fig, settings.plot_dir + '/figures/soda_bootstrapped_grouplevel.png')
+
+
+fig, axs = plt.subplots(1, 2, figsize=[14, 6], sharey=True, sharex=True)
+for i, period in enumerate(['fwd', 'bkw']):
+    ax=axs[i]
+    df_sel = df_power[(df_power.period==period)]
+    sns.lineplot(df_sel, x='n_samples', y='power', hue='interval',
+                 palette=settings.palette_wittkuhn2, ax=ax)
+    ax.axhline(0.8, c='gray', alpha=0.7, linestyle='--')
+    ax.set(title=f'{"forward" if period=="fwd" else "backward"} period',
+               ylabel='power\n(% significant)',
+               xlabel='bootstrapped sample size')
+fig.suptitle('Bootstrapped power analysis, resampled participants, forward period only')
+savefig(fig, settings.plot_dir + '/figures/soda_bootstrapped_grouplevel_single.png')
+
+#%% participant-level: heatmap of slopes
 
 fig, axs = plt.subplots(2, 3, figsize=[14, 8])
 axs.flat[-1].axis('off')
 
 for i, (interval, df_subj) in enumerate(df_slopes.groupby('interval')):
 
-    df = df_subj.groupby(['tr', 'subject']).mean().reset_index()
-
-    slopes = np.squeeze([df_subj.sort_values('timepoint').slope for _, df_subj in df.groupby('subject')])
+    df_subj = df_subj.groupby(['tr', 'subject']).mean().reset_index()
+    slopes = misc.long_df_to_array(df_subj, 'slope',  columns=['subject', 'tr'])
 
     ax = axs.flat[i]
     ax.clear()
     tr_fwd = settings.exp_tr[interval]['fwd']
 
     df_interval = pd.DataFrame(slopes, columns=np.arange(1, 14), index=subjects)
-    fwd_cols = list(range(tr_fwd[0], tr_fwd[1] + 1))
+
+    # sort based on forward period
+    fwd_cols = list(range(tr_fwd[0]-1, tr_fwd[1]))
     df_interval = df_interval.assign(_sort=df_interval[fwd_cols].mean(axis=1)).sort_values('_sort', ascending=False).drop(columns='_sort')
     sns.heatmap(df_interval, cmap='RdBu_r', ax=ax)
     ax.set(ylabel='subject', xlabel='tr', title=f'{interval=} ms')
@@ -181,239 +279,212 @@ for i, (interval, df_subj) in enumerate(df_slopes.groupby('interval')):
 plotting.normalize_lims(axs, which='v')
 
 fig.suptitle('Mean slopes for all participants')
-savefig(fig, settings.plot_dir + '/figures/slopes_heatmap.png')
+savefig(fig, settings.plot_dir + '/figures/soda_slopes_heatmap.png')
 
-#%% heatmap for trials of selected participants
-np.random.seed(0)
-subjects_rnd = sorted(np.random.choice(subjects, 6, replace=False))
-
-fig, axs = plt.subplots(2, 3, figsize=[12, 8])
-axs.flat[-1].axis('off')
-
-df_sel = df_slopes[(df_slopes.interval == 0.512) & df_slopes.subject.isin(subjects_rnd)]
-
-for i, (subject, df_subj) in enumerate(df_sel.groupby('subject')):
-
-    slopes = [x.slope.values for _, x in df_subj.sort_values(['tr', 'trial']).groupby('trial')]
-    slopes = np.squeeze(slopes)
-
-    ax = axs.flat[i]
-    ax.clear()
-    sns.heatmap(pd.DataFrame(slopes, columns=np.arange(1, 14), index=np.arange(1, 16)),
-                cmap='RdBu_r', ax=ax)
-    ax.set(ylabel='trial', xlabel='tr', title=f'{subject}')
-
-    ax.set_xticks(np.arange(13), np.arange(1, 14))
-
-plotting.normalize_lims(axs, which='v')
-
-fig.suptitle('Slopes of all trials for selected participants')
-savefig(fig, settings.plot_dir + '/figures/slopes_heatmap_trials.png')
-
-
-
-#%% group-level: bootstrap participants
-
-def bootstrap_group(slopes, n_samples, n_draws=1000, rng=None):
-    n_subj = len(slopes)
-    rng = np.random.default_rng(rng)
-    all_idx = rng.integers(0, n_subj, (n_draws, n_samples))
-
-    ps = []
-    ts = []
-    for i in range(n_draws):
-        idx = all_idx[i]
-        slopes_sampled = slopes[idx]
-        p, t_obs, t_perms = signflip_test_slopes(slopes_sampled, rng=rng, n_perms=1000)
-        ps.append(p)
-        ts.append(t_obs)
-    return ps, ts
-
-
-df_slopes = joblib.load(pkl_slope)
-intervals = sorted(df_slopes.interval.unique())
-slopes_mean, _ = build_slopes_arrays(df_slope, subjects, intervals)
-
-df_power = pd.DataFrame()
-for i, interval in enumerate(tqdm(intervals, desc='bootstrapping')):
-    sm = slopes_mean[interval]  # [n_subj, n_trs]
-
-    # signflip_test is already using all cores so no improvement from Parallel here
-    res = Parallel(n_jobs=-1)(delayed(bootstrap_group)(sm, n, rng=n) for n in range(2, 60))
-    power = [(np.array(p) < 0.05).mean() for p, _ in res]
-
-    df_tmp = pd.DataFrame({'power': power,
-                           'interval': interval,
-                           'n_samples': range(2, 60)})
-    df_power = pd.concat([df_power, df_tmp], ignore_index=True)
-
-csv_power_group = settings.plot_dir + '/data/soda_3T_power_group.csv.gz'
-df_power.to_csv(csv_power_group)
-df_power = pd.read_csv(csv_power_group)
-
-fig, axs = plt.subplots(1, n_iv, figsize=[4 * n_iv, 3], sharey=True, sharex=True)
-for i, interval in enumerate(intervals):
-    df_sel = df_power[df_power.interval == interval]
-    n_sign = (df_sel.n_samples.iloc[(df_sel.power > 0.8).argmax()]
-              if (df_sel.power > 0.8).any() else np.nan)
-
-    ax = axs.flat[i]
-    sns.lineplot(df_sel, x='n_samples', y='power', ax=ax)
-    ax.axhline(0.8, c='gray', alpha=0.7, linestyle='--')
-    if not np.isnan(n_sign):
-        ax.axvline(n_sign, c='darkred', alpha=0.7, linestyle='--')
-        ax.text(n_sign + 1, 0.7, f'n={n_sign:.0f}', c='darkred')
-    ax.set(title=f'{interval=} s',
-           ylabel='power\n(% significant)',
-           xlabel='bootstrapped sample size')
-
-fig.suptitle('Bootstrapped power analysis, resampled participants')
-savefig(fig, settings.plot_dir + '/figures/soda_bootstrapped_grouplevel.png')
 
 
 #%% participant-level: p values across trials
-
-df_slopes = joblib.load(pkl_slope)
-intervals = sorted(df_slopes.interval.unique())
-_, slopes_trials = build_slopes_arrays(df_slope, subjects, intervals)
+# plot p values per participant
+pkl_pval = str(bids_base.copy().update(processing='soda', suffix='pvalues', extension='.pkl.gz'))
 
 df_pval = pd.DataFrame()
 
-for i, interval in enumerate(intervals):
-    pvals = []
-    for subj_idx, subject in enumerate(subjects):
-        st = slopes_trials[interval][subj_idx]  # [n_trials, n_trs]
-        if len(st) < 2:
-            pvals.append(np.nan)
-            continue
-        p, _, _ = signflip_test_slopes(st, rng=subj_idx)
-        pvals.append(p)
-    df_interval = pd.DataFrame({'p-value': pvals,
-                                'subject': subjects,
-                                'interval': f'{interval} s'})
-    df_pval = pd.concat([df_pval, df_interval])
+for (interval, subj, period), df_sel in tqdm(list(df_slopes.groupby(['interval', 'subject', 'period'])),
+                                             'calculating p values'):
+    slopes = misc.long_df_to_array(df_sel, 'slope', ['trial', 'tr'])
+    # flip sign if backward so we test in same direction
+    slopes = slopes * (-1 if period=='bkw' else 1)
+    t_obs, p, t_perms = permutation_t_test(slopes, tail=1, seed=int(subj), verbose=0)
+    df_cond = pd.DataFrame({'subject': subj,
+                            'period': period,
+                            'interval': interval,
+                            'p-value': min(p)}, index=[0])
+    df_pval = pd.concat([df_pval, df_cond], ignore_index=True)
 
-fig, ax = plt.subplots(1, 1, figsize=[8, 4])
-ax.axhline(0.05, linestyle='--', c='darkred')
-ax.set_yticks(list(ax.get_yticks()) + [0.05])
+joblib.dump(df_pval, pkl_pval)
+
+fig, axs = plt.subplots(2, 5, figsize=[16, 10], sharex=True)
 fig.suptitle('Significant slopes for individual participants\' trials')
 
-sns.violinplot(df_pval, y='p-value', x='interval', hue='interval', palette='tab10',
-               inner='point', inner_kws={'alpha': 0.4, 'linewidth': 1, 's': 20}, cut=0,
-               bw_adjust=0.5)
+for i, ((period, interval), df_sel) in enumerate(df_pval.groupby(['period', 'interval'])):
+    ax = axs.flat[i]
+    plotting.tornadoplot(df_sel, x='p-value', y='subject', center=0,
+                         low_label='p < 0', high_label='p > 0',
+                         sort=True, ax=ax)
+    ax.axvline(0.05, linestyle='--', c='darkred', linewidth=1.5, label='p=0.05')
+    pct = (df_sel['p-value'] < 0.05).mean() * 100
+    ax.set_title(f'{interval}\n{pct:.0f}% significant')
+    ax.set_xlabel('p-value')
 
-intervals_order = df_pval['interval'].unique()
-for x_pos, interval_label in enumerate(intervals_order):
-    vals = df_pval[df_pval['interval'] == interval_label]['p-value'].dropna()
-    pct = (vals < 0.05).mean() * 100
-    y_top = vals.max()
-    ax.text(x_pos, y_top + 0.02, f'p < 0.05\n{pct:.0f}%',
-            ha='center', va='bottom', fontsize=9, color='darkred')
+    if i == 0:
+        ax.set_ylabel('subject')
+    else:
+        ax.set_ylabel('')
 
 sns.despine()
 savefig(fig, settings.plot_dir + '/figures/soda_participant_pvalues.png')
 
 
 #%% participant-level: bootstrap trials
+pkl_power_part = str(bids_base.copy().update(processing='soda', suffix='powerparticipants', extension='.pkl.gz'))
 
-df_slopes = joblib.load(pkl_slope)
-intervals = sorted(df_slopes.interval.unique())
-_, slopes_trials = build_slopes_arrays(df_slope, subjects, intervals)
-
-
-def bootstrap_participants(slopes_list, n_samples, n_draws=1000, rng=None):
+def bootstrap_participants(slopes, n_samples, n_draws=10, rng=None):
     """Randomly draw a subset of n_trials per participant with repetition."""
     rng = np.random.default_rng(rng)
     ps = []
     for draw in range(n_draws):
         px = []
-        for subj_idx in range(len(slopes_list)):
-            st = slopes_list[subj_idx]  # [n_trials, n_trs]
+        for subj_idx in range(len(slopes)):
+            st = slopes[subj_idx]  # [n_trials, 1]
             n_trials = len(st)
-            if n_trials < 2:
-                px.append(np.nan)
-                continue
             idx = rng.integers(0, n_trials, n_samples)
             sampled = st[idx]
-            p, _, _ = signflip_test_slopes(sampled, rng=rng, n_perms=1000)
-            px.append(p)
+            t_obs, p, t_perms = permutation_t_test(sampled, n_permutations=100,
+                                                   tail=1, seed=draw, verbose=0)
+            px += [min(p)]
         ps.append(px)
     return ps
 
-
 df_power = pd.DataFrame()
 
-for i, interval in enumerate(intervals):
-    st = slopes_trials[interval]  # list of [n_trials, n_trs] per subject
-    res = Parallel(n_jobs=-1)(delayed(bootstrap_participants)(st, n, rng=n)
-                              for n in tqdm(range(2, 65)))
-    power = (np.array(res) < 0.05).mean(1)
-    df_tmp = misc.to_long_df(power, ['n_samples', 'subject'],
-                             n_samples=range(2, 65),
+for (interval, period), df_sel in tqdm(list(df_slopes.groupby(['interval', 'period'])),
+                                             'calculating p values'):
+
+    df_sel = df_sel.sort_values(['subject', 'trial', 'tr'])
+    n_trs = len(np.unique(df_sel.tr))
+    slopes = df_sel.slope.values.reshape([len(subjects), -1, n_trs])
+
+
+    slopes *= -1 if period=='bkw' else 1  # flip for backward period
+    res = Parallel(n_jobs=-1)(delayed(bootstrap_participants)(slopes, n, rng=n)
+                                  for n in range(2, 32))
+    powers = np.mean(np.array(res)<0.05, 1)
+    df_tmp = misc.to_long_df(powers, ['n_samples', 'subject'],
+                             n_samples=range(2, 32), subject=subjects,
                              value_name='power')
+
     df_tmp['interval'] = interval
+    df_tmp['period'] = period
     df_power = pd.concat([df_power, df_tmp], ignore_index=True)
 
-csv_power_part = settings.plot_dir + '/data/soda_3T_power_participants.csv.gz'
-df_power.to_csv(csv_power_part)
-df_power = pd.read_csv(csv_power_part)
 
-fig, axs = plt.subplots(1, n_iv, figsize=[4 * n_iv, 3], sharey=True, sharex=True)
+joblib.dump(df_power, pkl_power_part)
+df_power = joblib.load(pkl_power_part)
+
+fig, axs = plt.subplots(2, 5, figsize=[20, 6], sharey=True, sharex=True)
 
 for i, interval in enumerate(intervals):
-    df_sel = df_power[df_power.interval == interval]
-    ax = axs[i]
-    ax.clear()
-    sns.lineplot(df_sel, x='n_samples', y='power', hue='subject', ax=ax)
+    for j, period in enumerate(['fwd', 'bkw']):
+        df_sel = df_power[(df_power.interval == interval) & (df_power.period == period)]
+        ax = axs[j, i]
+        ax.clear()
+        sns.lineplot(df_sel, x='n_samples', y='power', hue='subject', ax=ax,
+                     legend=False)
+        ax.set(title=f'{interval=} ms, {period}')
 
 plotting.normalize_lims(axs)
 sns.despine()
 fig.suptitle('Bootstrapped power analysis, resampled trials')
 savefig(fig, settings.plot_dir + '/figures/soda_bootstrapped_participantlevel.png')
 
+#%% heatmap for trials of selected participants
+# np.random.seed(0)
+# subjects_rnd = sorted(np.random.choice(subjects, 6, replace=False))
 
+# fig, axs = plt.subplots(2, 3, figsize=[12, 8])
+# axs.flat[-1].axis('off')
+
+# df_sel = df_slopes[(df_slopes.interval == 0.512) & df_slopes.subject.isin(subjects_rnd)]
+
+# for i, (subject, df_subj) in enumerate(df_sel.groupby('subject')):
+
+#     slopes = [x.slope.values for _, x in df_subj.sort_values(['tr', 'trial']).groupby('trial')]
+#     slopes = np.squeeze(slopes)
+
+#     ax = axs.flat[i]
+#     ax.clear()
+#     sns.heatmap(pd.DataFrame(slopes, columns=np.arange(1, 14), index=np.arange(1, 16)),
+#                 cmap='RdBu_r', ax=ax)
+#     ax.set(ylabel='trial', xlabel='tr', title=f'{subject}')
+
+#     ax.set_xticks(np.arange(13), np.arange(1, 14))
+
+# plotting.normalize_lims(axs, which='v')
+
+# fig.suptitle('Slopes of all trials for selected participants')
+# savefig(fig, settings.plot_dir + '/figures/slopes_heatmap_trials.png')
 #%% trial-level: individual trial peak slopes
 
 import matplotlib.lines as mlines
 from matplotlib.colors import LinearSegmentedColormap
 
-df_slopes = joblib.load(pkl_slope)
-intervals = sorted(df_slopes.interval.unique())
-slopes_mean, slopes_trials = build_slopes_arrays(df_slope, subjects, intervals)
-
-fig, axs = plt.subplots(2, int(np.ceil(n_iv / 2)), figsize=[18, 10])
+fig, axs = plt.subplots(2, n_iv, figsize=[20, 10])
 
 for i, interval in enumerate(intervals):
-    exp_tr = get_expected_tr_idx(float(interval))
-    lo = max(0, exp_tr - 1)
-    hi = min(12, exp_tr + 2)
-    sm = slopes_mean[interval]  # [n_subj, n_trs]
-    mean_slope = sm[:, lo:hi].mean(-1)  # [n_subj]
+    for j, period in enumerate(['fwd', 'bkw']):
+        trs = settings.exp_tr[interval][period]
+        lo, hi = trs[0] - 1, trs[1]
 
-    # per-trial long-form for boxen + scatter
-    df_long = pd.DataFrame()
-    for s_idx, subject in enumerate(subjects):
-        st = slopes_trials[interval][s_idx]  # [n_trials, n_trs]
-        ps_trial = st[:, lo:hi].mean(-1)
-        df_long = pd.concat([df_long, pd.DataFrame({
-            'peak_slope': ps_trial,
-            'subject': subject,
-        })], ignore_index=True)
+        df_sel = df_mean[df_mean.interval == interval]
+        slopes = misc.long_df_to_array(df_sel, 'slope', columns=['subject', 'tr'])
+        mean_slope = slopes[:, lo:hi].mean(-1)  # [n_subj]
 
-    norm = plt.Normalize(vmin=-np.abs(mean_slope).max(), vmax=np.abs(mean_slope).max())
-    cmap = LinearSegmentedColormap.from_list('rg', ['crimson', '#d0d0d0', 'seagreen'])
-    palette = [cmap(norm(v)) for v in mean_slope]
+        # permutation test per participant using their trial-level slopes
+        pvals_subj = []
+        df_long = pd.DataFrame()
+        for s_idx, subject in enumerate(subjects):
+            df_s = df_slopes[(df_slopes.interval == interval) & (df_slopes.subject == subject)]
+            trial_slopes = np.array([g.sort_values('tr')['slope'].values for _, g in df_s.groupby('trial')])
+            peak = trial_slopes[:, lo:hi].mean(-1) if len(trial_slopes) > 0 else np.array([])
 
-    ax = axs.flat[i]
-    ax.clear()
-    sns.boxenplot(df_long, x='subject', y='peak_slope', showfliers=False,
-                  palette=palette, ax=ax)
-    sns.scatterplot(df_long, x='subject', y='peak_slope', alpha=0.5, c='gray', ax=ax)
-    for j, (subj, mean_val) in enumerate(zip(subjects, mean_slope)):
-        ax.scatter(j, mean_val, marker='D', s=40, color='black', zorder=5)
-    ax.set_xticklabels(ax.get_xticklabels(), rotation=90)
-    ax.axhline(0, linestyle='--', c='black')
-    ax.set(title=f'interval {interval} s', ylabel='slope at expected TR')
+            if len(trial_slopes) < 2:
+                pvals_subj.append(np.nan)
+            else:
+                st_peak = peak[:, np.newaxis]
+                tail = -1 if period == 'bkw' else 1
+                t_obs, p, t_perms = permutation_t_test(st_peak, tail=tail, seed=s_idx, verbose=0)
+                pvals_subj.append(p[0])
+
+            df_long = pd.concat([df_long, pd.DataFrame({
+                'peak_slope': peak,
+                'subject': subject,
+            })], ignore_index=True)
+
+        # sort subjects ascending by mean slope
+        sort_idx = np.argsort(mean_slope)[::-1 if period=='bkw' else 1]
+        subjects_sorted = [subjects[k] for k in sort_idx]
+        mean_slope_sorted = mean_slope[sort_idx]
+        pvals_sorted = [pvals_subj[k] for k in sort_idx]
+
+        norm = plt.Normalize(vmin=-np.abs(mean_slope_sorted).max(),
+                             vmax=np.abs(mean_slope_sorted).max())
+        # fwd: positive=green, negative=red; bkw: negative=green, positive=red
+        if period == 'bkw':
+            cmap = LinearSegmentedColormap.from_list('rg', ['seagreen', '#d0d0d0', 'crimson'])
+        else:
+            cmap = LinearSegmentedColormap.from_list('rg', ['crimson', '#d0d0d0', 'seagreen'])
+        palette = [cmap(norm(v)) for v in mean_slope_sorted]
+
+        ax = axs[j, i]
+        ax.clear()
+        sns.boxenplot(df_long, x='subject', y='peak_slope', order=subjects_sorted,
+                      showfliers=False, palette=palette, ax=ax)
+        sns.scatterplot(df_long, x='subject', y='peak_slope', alpha=0.5, c='gray',
+                        s=10, ax=ax)
+        for k, (subj, mean_val) in enumerate(zip(subjects_sorted, mean_slope_sorted)):
+            ax.scatter(k, mean_val, marker='D', s=40, color='black', zorder=5)
+        ax.set_xticklabels(ax.get_xticklabels(), rotation=90)
+        ax.axhline(0, linestyle='--', c='black')
+        ax.set(title=f'{interval=} ms, {period}', ylabel='mean slope at expected TR')
+
+        # annotate significant participants with a star above their column
+        y_bottom, y_top = ax.get_ylim()
+        y_star = y_top * 0.95
+        for k, p in enumerate(pvals_sorted):
+            if p < 0.05:
+                ax.text(k, y_star, '*', ha='center', va='bottom', fontsize=14,
+                        fontweight='bold', color='black')
+        ax.set_ylim(y_bottom, y_top * 1.1)
 
 legend_handles = [
     mlines.Line2D([], [], marker='o', color='gray', alpha=0.5, linestyle='None',
@@ -429,23 +500,20 @@ savefig(fig, settings.plot_dir + '/figures/soda_trial_level_peaks.png')
 
 #%% trial-level: correlate with behaviour
 
-df_slopes = joblib.load(pkl_slope)
-intervals = sorted(df_slopes.interval.unique())
-slopes_mean, _ = build_slopes_arrays(df_slope, subjects, intervals)
-
-df_responses = load_responses_sequence_3T(subjects)
+df_responses = bids_utils.load_responses_sequence_3T(subjects)
 
 fig, axs = plt.subplots(1, n_iv, figsize=[4 * n_iv, 4])
 
 for i, interval in enumerate(intervals):
-    exp_tr = get_expected_tr_idx(float(interval))
-    lo, hi = max(0, exp_tr - 1), min(12, exp_tr + 2)
-    sm = slopes_mean[interval]
-    mean_slope = sm[:, lo:hi].mean(-1)  # [n_subj]
+    tr_fwd = settings.exp_tr[interval]['fwd']
+    lo, hi = tr_fwd[0] - 1, tr_fwd[1]
+    df_sel = df_mean[df_mean.interval == interval]
+    slopes = misc.long_df_to_array(df_sel, 'slope', columns=['subject', 'tr'])
+    mean_slope = slopes[:, lo:hi].mean(-1)  # [n_subj]
 
     beh_acc = np.array([
         df_responses[(df_responses.subject == s) &
-                     (df_responses.interval_time == interval)].accuracy.mean()
+                     (df_responses.interval_time_y == interval)].accuracy.mean()
         for s in subjects
     ])
 
@@ -458,7 +526,7 @@ for i, interval in enumerate(intervals):
                 line_kws={'alpha': 0.7}, ax=ax)
     ax.text(0.5, 0.95, f'r={r:.2f}, p={p:.3f}', transform=ax.transAxes,
             va='top', ha='center', fontsize=12)
-    ax.set(title=f'{interval=} s')
+    ax.set(title=f'{interval=} ms')
 
 fig.suptitle('Slopes correlations with behavioral accuracy')
 savefig(fig, settings.plot_dir + '/figures/soda_correlations.png')
@@ -466,21 +534,18 @@ savefig(fig, settings.plot_dir + '/figures/soda_correlations.png')
 
 #%% trial-level: slopes at expected TR vs individual trial response
 
-df_slopes = joblib.load(pkl_slope)
-intervals = sorted(df_slopes.interval.unique())
-_, slopes_trials = build_slopes_arrays(df_slope, subjects, intervals)
-
-df_responses = load_responses_sequence_3T(subjects)
+df_responses = bids_utils.load_responses_sequence_3T(subjects)
 
 df_trial_resp = pd.DataFrame()
 
 for interval in intervals:
-    exp_tr = get_expected_tr_idx(float(interval))
-    lo, hi = max(0, exp_tr - 1), min(12, exp_tr + 2)
+    tr_fwd = settings.exp_tr[interval]['fwd']
+    lo, hi = tr_fwd[0] - 1, tr_fwd[1]
 
     for s_idx, subject in enumerate(subjects):
-        st = slopes_trials[interval][s_idx]  # [n_trials, n_trs]
-        peak_slope = st[:, lo:hi].mean(-1)
+        df_s = df_slopes[(df_slopes.interval == interval) & (df_slopes.subject == subject)]
+        trial_slopes = np.array([g.sort_values('tr')['slope'].values for _, g in df_s.groupby('trial')])
+        peak_slope = trial_slopes[:, lo:hi].mean(-1) if len(trial_slopes) > 0 else np.array([])
 
         df_subj = df_responses[(df_responses.subject == subject) &
                                (df_responses.interval_time == interval)].reset_index(drop=True)
@@ -521,29 +586,24 @@ for i, interval in enumerate(intervals):
     ax.text(0.5, 0.98, f'r={r:.2f}, p={p:.3f}', transform=ax.transAxes,
             va='top', ha='center', fontsize=9)
     ax.axhline(0, linestyle='--', c='black', alpha=0.4)
-    ax.set(title=f'{interval=} s', xlabel='')
+    ax.set(title=f'{interval=} ms', xlabel='')
 
 sns.despine()
 fig.suptitle('Trial slope at expected TR: correct vs incorrect responses')
 savefig(fig, settings.plot_dir + '/figures/soda_vs_response.png')
 
 
-#%% inter-interval: subject consistency across ISI conditions
-
-df_slopes = joblib.load(pkl_slope)
-intervals = sorted(df_slopes.interval.unique())
-slopes_mean, _ = build_slopes_arrays(df_slope, subjects, intervals)
+#%% supplement: inter-interval: subject consistency across ISI conditions
 
 # build [n_subj, n_intervals] matrix of peak slopes
-peak_matrix = np.column_stack([
-    slopes_mean[iv][:,
-        max(0, get_expected_tr_idx(float(iv)) - 1):
-        min(12, get_expected_tr_idx(float(iv)) + 2)
-    ].mean(-1)
-    for iv in intervals
-])  # [n_subj, n_intervals]
+peak_cols = []
+for iv in intervals:
+    df_sel = df_mean[df_mean.interval == iv]
+    slopes = misc.long_df_to_array(df_sel, 'slope', columns=['subject', 'tr'])
+    tr_fwd = settings.exp_tr[iv]['fwd']
+    peak_cols.append(slopes[:, tr_fwd[0]-1:tr_fwd[1]].mean(-1))
+peak_matrix = np.column_stack(peak_cols)  # [n_subj, n_intervals]
 
-n_iv = len(intervals)
 corr_r = np.zeros((n_iv, n_iv))
 corr_p = np.zeros((n_iv, n_iv))
 for a in range(n_iv):
@@ -557,8 +617,8 @@ for a in range(n_iv):
         corr_p[a, b] = p
 
 df_corr = pd.DataFrame(corr_r,
-                       index=[f'{iv} s' for iv in intervals],
-                       columns=[f'{iv} s' for iv in intervals])
+                       index=[f'{iv} ms' for iv in intervals],
+                       columns=[f'{iv} ms' for iv in intervals])
 
 fig, axs = plt.subplots(1, 2, figsize=[12, 4])
 
@@ -585,7 +645,7 @@ for a in range(n_iv):
         iax = inner_axs[a, b]
         if a == b:
             iax.hist(peak_matrix[:, a], bins=10, color='steelblue', edgecolor='white')
-            iax.set_title(f'{intervals[a]} s', fontsize=8)
+            iax.set_title(f'{intervals[a]} ms', fontsize=8)
         elif a > b:
             mask = ~(np.isnan(peak_matrix[:, b]) | np.isnan(peak_matrix[:, a]))
             r, p = pearsonr(peak_matrix[mask, b], peak_matrix[mask, a])
@@ -609,21 +669,18 @@ savefig(inner_fig, settings.plot_dir + '/figures/soda_inter_interval_scatter.png
 savefig(fig, settings.plot_dir + '/figures/soda_inter_interval_corr.png')
 
 
-#%% temporal drift: slopes vs trial position
-
-df_slopes = joblib.load(pkl_slope)
-intervals = sorted(df_slopes.interval.unique())
-_, slopes_trials = build_slopes_arrays(df_slope, subjects, intervals)
+#%% supplement: temporal drift: slopes vs trial position
 
 df_drift = pd.DataFrame()
 
 for interval in intervals:
-    exp_tr = get_expected_tr_idx(float(interval))
-    lo, hi = max(0, exp_tr - 1), min(12, exp_tr + 2)
+    tr_fwd = settings.exp_tr[interval]['fwd']
+    lo, hi = tr_fwd[0] - 1, tr_fwd[1]
 
     for s_idx, subject in enumerate(subjects):
-        st = slopes_trials[interval][s_idx]  # [n_trials, n_trs]
-        peak_slope = st[:, lo:hi].mean(-1)
+        df_s = df_slopes[(df_slopes.interval == interval) & (df_slopes.subject == subject)]
+        trial_slopes = np.array([g.sort_values('tr')['slope'].values for _, g in df_s.groupby('trial')])
+        peak_slope = trial_slopes[:, lo:hi].mean(-1) if len(trial_slopes) > 0 else np.array([])
         n_trials = len(peak_slope)
         df_tmp = pd.DataFrame({
             'slope': peak_slope,
@@ -657,30 +714,27 @@ for i, interval in enumerate(intervals):
     ax.text(0.05, 0.97, f'r={r:.2f}, p={p:.3f}', transform=ax.transAxes,
             va='top', ha='left', fontsize=9)
     ax.axhline(0, linestyle='--', c='black', alpha=0.4)
-    ax.set(title=f'{interval=} s', xlabel='trial position (normalised)', ylabel='peak slope')
+    ax.set(title=f'{interval=} ms', xlabel='trial position (normalised)', ylabel='peak slope')
 
 sns.despine()
 fig.suptitle('Temporal drift: slopes across trial position (blue=individual, black=group)')
 savefig(fig, settings.plot_dir + '/figures/soda_temporal_drift.png')
 
 
-#%% trial-level: slopes vs reaction time
+#%% supplement: trial-level: slopes vs reaction time
 
-df_slopes = joblib.load(pkl_slope)
-intervals = sorted(df_slopes.interval.unique())
-_, slopes_trials = build_slopes_arrays(df_slope, subjects, intervals)
-
-df_responses = load_responses_sequence_3T(subjects)
+df_responses = bids_utils.load_responses_sequence_3T(subjects)
 
 df_rt = pd.DataFrame()
 
 for interval in intervals:
-    exp_tr = get_expected_tr_idx(float(interval))
-    lo, hi = max(0, exp_tr - 1), min(12, exp_tr + 2)
+    tr_fwd = settings.exp_tr[interval]['fwd']
+    lo, hi = tr_fwd[0] - 1, tr_fwd[1]
 
     for s_idx, subject in enumerate(subjects):
-        st = slopes_trials[interval][s_idx]
-        peak_slope = st[:, lo:hi].mean(-1)
+        df_s = df_slopes[(df_slopes.interval == interval) & (df_slopes.subject == subject)]
+        trial_slopes = np.array([g.sort_values('tr')['slope'].values for _, g in df_s.groupby('trial')])
+        peak_slope = trial_slopes[:, lo:hi].mean(-1) if len(trial_slopes) > 0 else np.array([])
 
         df_subj = df_responses[(df_responses.subject == subject) &
                                (df_responses.interval_time == interval)].reset_index(drop=True)
@@ -714,8 +768,70 @@ for i, interval in enumerate(intervals):
         ax.text(0.05, 0.97, f'r={r:.2f}, p={p:.3f}', transform=ax.transAxes,
                 va='top', ha='left', fontsize=9)
     ax.axhline(0, linestyle='--', c='black', alpha=0.4)
-    ax.set(title=f'{interval=} s', xlabel='reaction time (z-scored)', ylabel='peak slope')
+    ax.set(title=f'{interval=} ms', xlabel='reaction time (z-scored)', ylabel='peak slope')
 
 sns.despine()
 fig.suptitle('Slopes vs reaction time (correct trials only)')
 savefig(fig, settings.plot_dir + '/figures/soda_vs_rt.png')
+
+#%% effect size visualization at expected TRs
+
+import pingouin as pg
+
+df_eff = pd.DataFrame()
+
+for interval in intervals:
+    df_sel = df_mean[df_mean.interval == interval]
+    slopes = misc.long_df_to_array(df_sel, 'slope', columns=['subject', 'tr'])
+
+    for period in ['fwd', 'bkw']:
+        tr_range = settings.exp_tr[interval][period]
+        lo, hi = tr_range[0] - 1, tr_range[1]
+        slope_sign = -1 if period == 'bkw' else 1
+
+        slopes_peak = slopes[:, lo:hi].mean(-1) * slope_sign  # [n_subj]
+        d = pg.compute_effsize(slopes_peak, y=0)
+        df_tmp = pd.DataFrame({'interval': interval,
+                               'cohens d': d,
+                               'period': period,
+                               'type': 'mean'}, index=[0])
+        df_eff = pd.concat([df_eff, df_tmp])
+
+for interval in intervals:
+    for period in ['fwd', 'bkw']:
+        tr_range = settings.exp_tr[interval][period]
+        lo, hi = tr_range[0] - 1, tr_range[1]
+        slope_sign = -1 if period == 'bkw' else 1
+
+        for s_idx, subj in enumerate(subjects):
+            df_s = df_slopes[(df_slopes.interval == interval) & (df_slopes.subject == subj)]
+            trial_slopes = np.array([g.sort_values('tr')['slope'].values for _, g in df_s.groupby('trial')])
+            if len(trial_slopes) == 0:
+                continue
+            peak_slope = trial_slopes[:, lo:hi].mean(-1) * slope_sign
+            d = pg.compute_effsize(peak_slope, y=0)
+            df_tmp = pd.DataFrame({'interval': interval,
+                                   'cohens d': d,
+                                   'subject': subj,
+                                   'period': period,
+                                   'type': 'trials'}, index=[0])
+            df_eff = pd.concat([df_eff, df_tmp])
+
+fig, axs = plt.subplots(2, 2, figsize=[8, 8])
+
+for j, period in enumerate(['fwd', 'bkw']):
+    ax = axs[j, 0]
+    df_sel = df_eff[(df_eff.type == 'trials') & (df_eff.period == period)]
+    sns.boxplot(df_sel, x='interval', y='cohens d', fliersize=0, ax=ax)
+    sns.stripplot(data=df_sel, x='interval', y='cohens d', color='black', alpha=0.5, ax=ax)
+    ax.set_title(f'Participant\'s effect sizes ({period})')
+    ax.axhline(0, linestyle='--', alpha=0.5, c='black')
+
+    ax = axs[j, 1]
+    df_sel = df_eff[(df_eff.type == 'mean') & (df_eff.period == period)]
+    sns.boxplot(df_sel, x='interval', y='cohens d', fliersize=0, ax=ax)
+    ax.set_title(f'Group mean\'s effect size ({period})')
+    ax.axhline(0, linestyle='--', alpha=0.5, c='black')
+
+plotting.normalize_lims(axs)
+savefig(fig, settings.plot_dir + '/figures/soda_effect_sizes.png')

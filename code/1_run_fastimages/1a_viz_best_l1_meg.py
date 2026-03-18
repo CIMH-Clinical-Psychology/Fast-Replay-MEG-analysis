@@ -165,7 +165,7 @@ for subj, df_subj in df_acc_rounded.groupby('subject'):
     for _, row in df_peak.iterrows():
         peak_acc_data.append({
             'subject': subj,
-            'C_rounded': row['C_rounded'],
+            'C_rounded': round(row['C_rounded'], 2),
             'accuracy': row['accuracy']
         })
 
@@ -182,6 +182,22 @@ ax.set_title('Peak decoding accuracy vs L1 value')
 ax.legend()
 plt.tight_layout()
 plt.savefig('peak_accuracy_vs_l1.png', dpi=150)
+
+#%% Heatmap: Peak decoding accuracy per participant across L1 values
+
+# Pivot df_peak to create heatmap: rows=subjects, cols=L1 values
+heatmap_peak = df_peak.pivot_table(index='subject', columns='C_rounded', values='accuracy')
+heatmap_peak = heatmap_peak.sort_index()
+
+fig, ax = plt.subplots(figsize=[14, 10])
+sns.heatmap(heatmap_peak, ax=ax, cmap='viridis', vmin=0.2, vmax=1,
+            cbar_kws={'label': 'Peak Decoding Accuracy'})
+
+ax.set_title('Peak decoding accuracy per participant across L1 values')
+ax.set_xlabel('L1 regularization value (C)')
+ax.set_ylabel('Subject')
+
+plotting.savefig(fig, f'{plot_dir}/heatmap_peak_accuracy_subjects_l1.png')
 
 #%% Heatmap per participant: L1 value (y) x timepoint (x) with accuracy as color
 

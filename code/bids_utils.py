@@ -15,17 +15,46 @@ import numpy as np
 import pandas as pd
 import settings
 from settings import layout_MEG, layout_3T
+from meg_utils import misc
 from meg_utils.pipeline import DataPipeline, LoadRawStep, EpochingStep
 from meg_utils.pipeline import ResampleStep, NormalizationStep, CustomStep
 from meg_utils.pipeline import ToArrayStep, StratifyStep
 from meg_utils.preprocessing import rescale_meg_transform_outlier
 
 
+
 mem = joblib.Memory(settings.cache_dir)
 
-def load_latest_classifier(subject):
-    clfs = layout_MEG.get(subject=subject, suffix='clf', extension='pkl.gz')
-    clfs = [clf for clf in clfs if 'latest_clf' in clf.filename]
+
+def _norm_subj(subject):
+    """Normalize subject id to zero-padded 2-digit string ('01').
+
+    Accepts any of: int (1), '1', '01', 'sub-01', 'sub-1'.
+    """
+    s = str(subject).strip().replace('sub-', '')
+    return f'{int(s):02d}'
+
+
+def get_decoding_accuracy(subject):
+    """Load peak cross-validated decoding accuracy for a subject from the localizer gridsearch."""
+    subject = _norm_subj(subject)
+    deriv = layout_MEG.derivatives['derivatives']
+    files = deriv.get(subject=subject, task='main', acquisition='slow',
+                      proc='gridsearch', extension='.csv.pkl.gz',
+                      suffix='accuracy', invalid_filters='allow')
+    assert len(files) == 1, f'Expected 1 accuracy file for {subject=}, got {len(files)}'
+    df_acc = pd.read_pickle(files[0])
+    best_C = df_acc.groupby('C').accuracy.mean().idxmax()
+    return df_acc[df_acc.C == best_C].accuracy.max()
+
+
+def load_latest_classifier(subject, which='mean'):
+    """load the latest created classifier, either trained on mean values or
+    individual (subject) level values (l1 and timepoint)"""
+    subject = _norm_subj(subject)
+    assert which in ['mean', 'subj'], 'must be mean of subj'
+    clfs = layout_MEG.get(subject=subject, extension='pkl.gz')
+    clfs = [clf for clf in clfs if f'latest_clf-{which}' in clf.filename]
     assert len(clfs)==1, f'{len(clfs)=} classifier found for {subject=}'
     clf = joblib.load(clfs[0])
     return clf
@@ -65,6 +94,7 @@ def tsv2events(df_events, sfreq=100):
     events[:, 0] = np.round(df_events['sample'] / factor)
     events[:, 2] = df_events.value
     return events.astype(int)
+
 
 @mem.cache
 def load_behaviour(subject, **filters):
@@ -111,6 +141,7 @@ def load_behaviour(subject, **filters):
     >>> df = load_behaviour(subject='01', task='main', run=1)
     >>> print(df.head())
     """
+    subject = _norm_subj(subject)
     beh_tsv = layout_MEG.get(subject=subject, return_type='filenames', datatype='beh',
                          extension='tsv')
     assert len(beh_tsv)==1, \
@@ -120,6 +151,8 @@ def load_behaviour(subject, **filters):
     # add trigger values of stimuli
     df_beh['trigger'] = df_beh['stim_label'].apply(lambda x: settings.trigger_img.get(x, np.nan)-1)
     df_beh = df_beh.convert_dtypes()
+    if 'subject' in df_beh.columns:
+        df_beh['subject'] = df_beh['subject'].apply(_norm_subj)
 
     # apply filter on columns
     for filt in filters:
@@ -159,6 +192,8 @@ def load_decoding_3T(subject, **filters):
     pandas.DataFrame
         A DataFrame containing the filtered behavioral data.
     """
+    subject = _norm_subj(subject)
+
     filename = f'{settings.bids_dir_3T_decoding}/decoding/sub-{subject}/data/sub-{subject}_decoding.csv'
     df_proba = pd.read_csv(filename, low_memory=False)
 
@@ -171,13 +206,68 @@ def load_decoding_3T(subject, **filters):
             df_proba = df_proba[df_proba[filt]==filters[filt]]
 
         assert len(df_proba), f'{filt=}={filters[filt]} did not match any fields'
-    df_proba = df_proba.apply(pd.to_numeric, errors='ignore').convert_dtypes()
+    df_proba = misc.convert_to_numeric(df_proba)
     return df_proba
 
+@mem.cache
+def load_decoding_fast_images_3T(subject):
+    """load classifier probabilities with onset reset to each image start"""
+    subject = _norm_subj(subject)
+    df = load_decoding_seq_3T(subject, classifier=settings.categories,
+                              test_set='test-seq_long')
+    df_beh = load_trial_data_3T(subject)
+
+    df = df[df['class']!='other']
+    # trim dataframe for faster processing
+    df.drop(['stim', 'tr', 'stim_tr', 'run_study', 'session', 'run_tr',
+             'run_tr_onset', 'pred_label', 'test_set', 'mask', 'class'],
+            inplace=True, axis=1)
+
+    seqs = dict(zip(df_beh.trial, df_beh.stim_label))
+    # trial-wise long format table with accuracies, centred on stim onset
+    df_proba = pd.DataFrame()
+    # df_acc = pd.DataFrame()
+    for trial, df_trial in df.groupby('trial'):
+        isi = df_trial.tITI.unique()[0]
+
+        # get the order of images for this trial
+        seq = seqs[trial]
+        onsets = [(isi+0.1)*i for i in range(5)]
+
+        for serial_pos, (stim, onset) in enumerate(zip(seq, onsets)):
+            # center timings on the onset of the current stimulus
+            df_stim = df_trial.copy()
+            df_stim.tr_onset = df_stim.tr_onset-onset
+            df_stim = df_stim[df_stim.tr_onset>0] # only TR after stim
+            df_stim = df_stim.sort_values(['classifier', 'tr_onset'])
+            df_stim['serial_position'] = serial_pos + 1
+            df_stim['stim'] = stim
+            # proba = np.array(df_stim.probability).reshape([-1, 5], order='F')
+            df_proba = pd.concat([df_proba, df_stim], ignore_index=True)
+            # preds = [sorted(settings.categories)[i] for i in np.argmax(proba, 1)]
+            # acc = np.array(preds)==stim
+            # df_acc = pd.concat([pd.DataFrame({'accuracy': acc,
+            #                                   'tr_onset': df_stim.tr_onset.unique(),
+            #                                   'serial_position': serial_pos,
+            #                                   'interval': isi,
+            #                                   'stimulus': stim}), df_acc])
+
+    # calculating the accuracies doesn't really make sense
+    # df_acc.tr_onset =  df_acc.tr_onset.round(1)
+    # df_acc = df_acc.groupby(['tr_onset', 'serial_position', 'stimulus', 'interval']).mean().reset_index()
+    df_proba = df_proba.rename({'tITI': 'interval'}, axis=1)
+    df_proba.interval = (df_proba.interval*1000).astype(int)
+    # round_to_base = lambda data, base: np.round(data / base) * base
+    # df_proba.tr_onset = round_to_base(df_proba.tr_onset, 0.2)
+
+    return df_proba
 
 def load_decoding_seq_3T(subject, classifier=settings.categories,
                          mask='cv', test_set='test-seq_long', **filters):
     """load the probability estimates of the sequence trials, wall-time aligned TR onsets"""
+    subject = _norm_subj(subject)
+    assert test_set in ['test-odd_peak', 'test-odd_long', 'test-seq_long',
+                        'test-rep_long', 'test-seq_cue', 'test-rep_cue', 'rest']
     if 'seq' in test_set:
         condition='sequence'
     elif 'odd' in test_set:
@@ -207,14 +297,15 @@ def load_decoding_seq_3T(subject, classifier=settings.categories,
     with warnings.catch_warnings():
         # Tell Python to ignore *only* FutureWarning-class messages
         warnings.simplefilter(action="ignore", category=FutureWarning)
-        df_proba = df_proba.apply(pd.to_numeric, errors='ignore').convert_dtypes()
-
+        df_proba = misc.convert_to_numeric(df_proba)
+    df_proba['subject'] = df_proba['id'].apply(_norm_subj)
     return df_proba
 
 
 @mem.cache
 def load_events_3T(subject, **filters):
     """load the task data of the 3T dataset"""
+    subject = _norm_subj(subject)
     events_tsv = layout_3T.get(subject=subject, return_type='filenames', datatype='func',
                          extension='tsv', suffix='events')
     assert len(events_tsv)==8, \
@@ -229,13 +320,16 @@ def load_events_3T(subject, **filters):
         else:
             df_events = df_events[df_events[filt]==filter_val]
         assert len(df_events)>0, f'{filt=}={filter_val} did not match any fields'
-    df_events = df_events.apply(pd.to_numeric, errors='ignore').convert_dtypes()
+    df_events = misc.convert_to_numeric(df_events)
+    if 'subject' in df_events.columns:
+        df_events['subject'] = df_events['subject'].apply(_norm_subj)
     return df_events
 
 
 @mem.cache
 def load_trial_data_3T(subject, condition='sequence'):
     """load the sequence or oddball data per trial"""
+    subject = _norm_subj(subject)
     df_events = load_events_3T(subject, condition=condition, trial_type='stimulus')
 
     seqs = []
@@ -252,10 +346,8 @@ def load_trial_data_3T(subject, condition='sequence'):
 
                   }]
     df_seq = pd.concat([pd.Series(seq) for seq in seqs], axis=1).transpose()
-    df_seq = df_seq.apply(pd.to_numeric, errors='ignore').convert_dtypes()
+    df_seq = misc.convert_to_numeric(df_seq)
     return df_seq
-
-
 
 
 @mem.cache
@@ -263,6 +355,7 @@ def load_fast_sequences(subject, intervals=[32, 64, 128, 512], sfreq=100,
                        tmin=3.1, tmax=3+(0.512+0.1)*5, verbose=False):
     """loads the fast sequences as one go, starting 3.1s after the text cue,
     i.e. 200ms before the first seq stimulus, ranging to maximum of sequences"""
+    subject = _norm_subj(subject)
     main_files = layout_MEG.get(subject=subject, suffix='raw',
                             scope='derivatives', proc='clean',
                             task='main', return_type='filenames')
@@ -315,6 +408,7 @@ def load_fast_sequences(subject, intervals=[32, 64, 128, 512], sfreq=100,
 @mem.cache
 def load_fast_images(subject, intervals=[32, 64, 128, 512], tmin=-0.2, tmax=0.5,
                      sfreq=100, verbose=False, positions=[1,2,3,4, 5]):
+    subject = _norm_subj(subject)
     main_files = layout_MEG.get(subject=subject, suffix='raw',
                             scope='derivatives', proc='clean',
                             task='main', return_type='filenames')
@@ -361,9 +455,62 @@ def load_fast_images(subject, intervals=[32, 64, 128, 512], tmin=-0.2, tmax=0.5,
     assert all((df_beh.trigger).values==data_y)
     return data_x, data_y, df_beh
 
+@mem.cache
+def load_responses_sequence_3T(subjects):
+    """Load sequence trial responses for 3T dataset.
+
+    Analogous to bids_utils.load_responses_sequence() for MEG.
+    Returns a DataFrame with columns: subject, trial, accuracy, interval_time, duration.
+    """
+    df_final = pd.DataFrame()
+    for subject in subjects:
+        df_choice = load_events_3T(subject, condition='sequence',
+                                              trial_type='choice')
+        df_stim = load_events_3T(subject, condition='sequence',
+                                            trial_type='stimulus')
+        # get interval per trial from stimulus events
+        interval_map = (df_stim.groupby(['run_study', 'trial'])
+                        .interval_time.first().reset_index())
+        df_choice = df_choice.merge(interval_map, on=['run_study', 'trial'], how='left')
+        df_choice['subject'] = subject
+        # normalise accuracy to bool (handles 'True'/'False' strings or 0/1)
+        df_choice['accuracy'] = (df_choice['accuracy'].astype(str).str.lower()
+                                 .map({'true': True, '1': True, '1.0': True,
+                                       'false': False, '0': False, '0.0': False}))
+        df_final = pd.concat([df_final, df_choice], ignore_index=True)
+    return df_final
+
+@mem.cache
+def load_responses_sequence_MEG():
+    """load a dataframe with sequences responses"""
+    df_final = pd.DataFrame()
+    for subject in range(1, 31):
+        subject = f'{subject:02d}'
+        df_beh = load_behaviour(subject, condition='sequence', trial_type='stimulus')
+        df_choice = load_behaviour(subject, condition='sequence', trial_type='choice')
+        accuracy = (df_choice.accuracy.values=='True')
+        # Use 'duration' instead of 'response_time': for sub-01 to sub-15 and sub-17,
+        # response_time has a constant per-subject clock offset bug, while duration
+        # correctly records time-to-response for all subjects.
+        rts = df_choice.duration.values
+
+        df_beh['idx'] = np.repeat(np.arange(64), 5)
+        beh = [df for _, df in df_beh.groupby('idx')]
+        intervals = [df.interval_time.iloc[0] for df in beh]
+        df_final = pd.concat([df_final,
+                              pd.DataFrame({'subject': subject,
+                                            'trial': np.arange(1, 65),
+                                            'accuracy': accuracy,
+                                            'interval_time': intervals,
+                                            'sequence': [x.trigger.values for x in beh],
+                                            'rt': rts
+                                            })])
+    return df_final
+
 @mem.cache(ignore=['verbose'])
 def load_localizer(subject, tmin=-0.2, tmax=0.8, sfreq=100, verbose=False):
     """load all localizer trials ('slow trials')"""
+    subject = _norm_subj(subject)
     main_files = layout_MEG.get(subject=subject, suffix='raw',
                             scope='derivatives', proc='clean',
                             task='main', return_type='filenames')
@@ -428,17 +575,38 @@ def load_localizer(subject, tmin=-0.2, tmax=0.8, sfreq=100, verbose=False):
     return data_x, data_y, df_beh
 
 #%% in-file testing
-# if __name__=='__main__':
-#     sfreq = 100
-#     tmin = -0.2
-#     tmax = 0.8
-#     pipe = DataPipeline([
-#         ('load raw', LoadRawStep()),
-#         (f'resampling to {sfreq}Hz', ResampleStep(sfreq=sfreq)),
-#         ('epoching', EpochingStep(event_id=np.arange(1, 6), tmin=tmin, tmax=tmax)),
-#         ('pick meg', CustomStep(lambda x: x.pick('meg'))),
-#         ('normalization', NormalizationStep(rescale_meg_transform_outlier, picks='meg')),
-#         ('to array', ToArrayStep(X=True, y=True))
+
+if __name__ == '__main__':
+
+    variants = [1, '1', '01', 'sub-01']
+    for subj in variants:
+        print(f'Testing subject={subj!r}')
+        get_decoding_accuracy(subj)
+        load_latest_classifier(subj)
+        load_behaviour(subj)
+        load_fast_images(subj)
+        load_fast_sequences(subj)
+        load_localizer(subj)
+        load_decoding_3T(subj)
+
+    print('All tests passed.')
+    import matplotlib.pyplot as plt
+    from meg_utils.plotting import normalize_lims
+
+    fig, axs = plt.subplots(6, 5,  figsize=[16, 8], sharex=True, sharey=True)
+    for subj in range(1, 31):
+        df = load_behaviour(subj, condition='localizer')
+        print(df.response_time.min())
+
+
+
+        diff = (df.response_time-df.duration)
+        diff = diff[~diff.isna()]
+        print(df.duration.max())
+#
+        ax = axs.flat[subj-1]
+        ax.hist(df.duration)
+        # print(df.interval_time.max())
 #         ], verbose=True)
 
 #     fif_file = 'Z:/fastreplay-MEG-bids/derivatives/sub-16/meg/sub-16_task-main_proc-clean_raw.fif'

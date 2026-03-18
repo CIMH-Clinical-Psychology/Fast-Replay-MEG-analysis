@@ -135,10 +135,12 @@ def run_gridsearch_l1(subject, condition='slow', overwrite=False):
     )
 
     df_acc = pd.concat([r[0] for r in res], ignore_index=True)
-    df_proba = pd.concat([r[1] for r in res], ignore_index=True)
+    df_acc = misc.compress_dataframe(df_acc)
 
-    df_acc['interval_time'] = interval_times
-    df_proba['interval_time'] = interval_times
+    df_proba = pd.concat([r[1] for r in res], ignore_index=True)
+    df_proba['interval_time'] = interval_times[df_proba['trial_idx']]
+    df_proba['proba'] = df_proba['proba'].astype(np.float32)
+    df_proba = misc.compress_dataframe(df_proba)
 
     df_acc.to_pickle(path_acc_pkl)
     df_proba.to_pickle(path_proba_pkl)
