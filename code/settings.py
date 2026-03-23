@@ -90,7 +90,7 @@ elif 'bids_dir_meg' in locals():
     # if reset_database:
     #     warnings.warn('resetting MEG BIDS database')
     layout_MEG = BIDSLayout(bids_dir_meg, derivatives=True)
-    layout_MEG.subjects_all = [x for x in layout_MEG.get_subjects() if (not 'emptyroom' in x)]
+    layout_MEG.subjects_all = [x for x in layout_MEG.get_subjects() if (not x in ['emptyroom', 'group'])]
     layout_MEG.subjects = [x for x in layout_MEG.subjects_all]
 
     if not layout_MEG.subjects:
@@ -159,6 +159,8 @@ tr_duration = 1.25  # TR duration in seconds
 
 # these are the expected TRs that the forward an backward phases are occurring
 # for, taken from Wittkuhn et al (2021).
+# be aware: the indexing is using MATLAB style starting at 1!
+# the slope arrays are usually starting at TR 1 as well.
 exp_tr = {32:   {'fwd': [2, 4], 'bkw': [5, 7]},
           64:   {'fwd': [2, 4], 'bkw': [5, 7]},
           128:  {'fwd': [2, 4], 'bkw': [5, 8]},
@@ -167,6 +169,9 @@ exp_tr = {32:   {'fwd': [2, 4], 'bkw': [5, 7]},
           }
 
 # time lags at which we expect the peak to be
+# the resulting index is 0 for the 0th time lag.
+# usually the indexing of sequenceness results
+# includes the zero-time lag with np.nan, so indexing is zero-based.
 exp_lag = {interval: round((interval+100)/10) for interval in intervals_MEG}
 
 # translate trigger values from German to English

@@ -28,7 +28,40 @@ plt.rc('ytick', labelsize=11)    # y tick labels
 plt.rc('legend', fontsize=11)    # legend
 # ---- load data -----
 stop
-#%% MEG full sequences probability
+
+#%% load 3T full sequences probability
+subjects = [f'{i:02d}' for i in range(1, 41)]
+
+categories = list(settings.trigger_translation.values())
+
+df_3T = pd.DataFrame()
+
+for subject in tqdm(subjects):
+    df_probas = bids_utils.load_decoding_3T(subject,
+                                test_set='test-seq_long',
+                                mask='cv',
+                                classifier=categories)
+    df_probas = df_probas[df_probas['class'].isin(categories)].reset_index()
+    df_seq = bids_utils.load_trial_data_3T(subject, condition='sequence')
+
+    # extract the sequences
+    dfs = []
+    for (t1, df_p), (t2, df_s) in zip(df_probas.groupby('trial'), df_seq.groupby('trial'), strict=True):
+        assert t1==t2
+        seq_labels = list(df_s.stim_label.values[0])
+        df_p['serial_position'] = df_p.classifier.apply(lambda x: seq_labels.index(x))
+        dfs += [df_p]
+
+    df_subj = pd.concat(dfs)
+    df_subj = df_subj.groupby(['tITI', 'serial_position', 'seq_tr']).mean(True).reset_index()
+    # for iti, df_iti in df_subj.groupby('tITI'):
+    #     plt.figure()
+    #     sns.lineplot(df_iti, x='seq_tr', y='probability', hue='serial_position')
+
+    df_3T = pd.concat([df_3T, df_subj], ignore_index=True)
+
+
+#%% create MEG full sequences probability
 from scipy.stats import zscore
 
 normalization = 'lambda x: x/x.mean(0)'
@@ -61,13 +94,13 @@ for subject in tqdm(layout_MEG.subjects):
     # sns.lineplot(df_subj, x='timepoint', y='proba', hue='interval')
     df_meg = pd.concat([df_meg, df_subj], ignore_index=True)
 
-#%% decode individual fast images
+#%% create MEG individual fast images
 
 normalization = 'lambda x: x/x.mean(0)'
 # normalization = 'lambda x: zscore(x, axis=0)'
 
 df = pd.DataFrame()
-for subject in tqdm(settings.layout.subjects):
+for subject in tqdm(settings.layout_MEG.subjects):
 
     clf = bids_utils.load_latest_classifier(subject)
     data_x, data_y, df_beh = bids_utils.load_fast_sequences(subject)
@@ -91,7 +124,6 @@ for subject in tqdm(settings.layout.subjects):
     # sns.lineplot(df_subj, x='timepoint', y='proba', hue='interval')
     df = pd.concat([df, df_subj], ignore_index=True)
 
-
 #%% full sequence probabilities
 from scipy.stats import zscore
 
@@ -101,7 +133,7 @@ normalization = 'lambda x: x/x.mean(0)'
 
 
 df = pd.DataFrame()
-for subject in tqdm(settings.layout.subjects, 'getting fast image accuracies'):
+for subject in tqdm(settings.layout_MEG.subjects, 'getting fast image accuracies'):
 
     clf = bids_utils.load_latest_classifier(subject)
     data_x, data_y, df_beh = bids_utils.load_fast_sequences(subject)
@@ -199,73 +231,62 @@ sns.lineplot(df_meg_single, x='timepoint', y='accuracy', hue='serial_position',
              palette=settings.palette_wittkuhn2)
 savefig(fig, settings.plot_dir + '/fast-sequence_individual_items-by-position.png')
 
-#%% 3T full sequences probability
-subjects = [f'{i:02d}' for i in range(1, 41)]
 
-categories = list(settings.trigger_translation.values())
-
-df_3T = pd.DataFrame()
-
-for subject in tqdm(subjects):
-    df_probas = bids_utils.load_decoding_3T(subject,
-                                test_set='test-seq_long',
-                                mask='cv',
-                                classifier=categories)
-    df_probas = df_probas[df_probas['class'].isin(categories)].reset_index()
-    df_seq = bids_utils.load_trial_data_3T(subject, condition='sequence')
-
-    # extract the sequences
-    dfs = []
-    for (t1, df_p), (t2, df_s) in zip(df_probas.groupby('trial'), df_seq.groupby('trial'), strict=True):
-        assert t1==t2
-        seq_labels = list(df_s.stim_label.values[0])
-        df_p['serial_position'] = df_p.classifier.apply(lambda x: seq_labels.index(x))
-        dfs += [df_p]
-
-    df_subj = pd.concat(dfs)
-    df_subj = df_subj.groupby(['tITI', 'serial_position', 'seq_tr']).mean(True).reset_index()
-    # for iti, df_iti in df_subj.groupby('tITI'):
-    #     plt.figure()
-    #     sns.lineplot(df_iti, x='seq_tr', y='probability', hue='serial_position')
-
-    df_3T = pd.concat([df_3T, df_subj], ignore_index=True)
-
-#%% plotting
-fig, axs = plt.subplots(5, 2, figsize=[8, 14])
-sns.despine(fig)
+#%% plot large fast sequence image
+fig, axs = plt.subplots(2, 4, figsize=[16, 6])
 
 for i, (isi, df_iti) in enumerate(df_meg.groupby('interval')):
-    ax = axs[i, 0]
+    ax = axs[0, i]
     sns.lineplot(df_iti, x='timepoint', y='proba', hue='position',
                  palette=settings.palette_wittkuhn1,
                  ax=ax, legend=False)
-    ax.vlines(np.arange(5)* (100+isi), *ax.get_ylim(), linewidth=0.5, color='black', alpha=0.3)
-    # ax.set_xlim(-200, interval*5+750)
-    ax.set_xlabel('')
-    ax.set_ylim([0.5, 2])
-    ax.set_ylabel('probability')
+
+    # plot lines for individual image onset
+    for pos in range(5):
+        ax.axvline(pos * (100+isi),  linewidth=0.5, color='black', alpha=0.3)
+    ax.set_xlabel('TR after stim onset')
+    ax.set_ylim([0.5, 2.3])
+    ax.set_ylabel('' if i>0 else 'normalized probability')
 
     # for ax in axs.flat:
     #     ax.set_xticks(np.arange(0, 3000, 500), np.arange(0, 3000, 500)/1000)
     ax.set_title(f'ISI {int(isi)} ms')
+axs[0, 0].annotate(f'MEG', xy=(0, 0.5), xycoords='axes fraction',
+                xytext=(-0.3, 0.5), textcoords='axes fraction',
+                fontsize=12, fontweight='bold', rotation=90,
+                va='center', ha='center', annotation_clip=False)
+
 
 for i, (isi, df_iti) in enumerate(df_3T.groupby('tITI')):
-    ax = axs[i, 1]
-    plot = sns.lineplot(df_iti, x='seq_tr', y='probability', hue='serial_position',
+    if isi == 2.048:
+        continue
+    ax = axs[1, i]
+    ax.clear()
+    sns.lineplot(df_iti, x='seq_tr', y='probability', hue='serial_position',
                  palette=settings.palette_wittkuhn1,
                  ax=ax, legend=None)
+
+    # plot lines for individual image onset
+    for pos in range(5):
+        t_onset = pos * (0.1+isi)/1.25 + 1.25/2
+        ax.axvline(t_onset, linewidth=0.5, color='black', alpha=0.3)
+
     ax.set_xticks(np.arange(1, 14, 2))
-    ax.set_xlabel('')
-    ax.set_ylabel('')
+    ax.set_xlabel('ms after stim onset')
+    ax.set_ylabel('' if i>0 else 'normalized probability')
     ax.set_title(f'ISI {int((float(isi)*1000))} ms')
     plt.pause(0.1)
 
-# plotting.normalize_lims(axs[:, 0])
-plotting.normalize_lims(axs[:, 1])
 
-axs[4, 0].set_xlabel('ms after stim onset')
-axs[4, 1].set_xlabel('TR after stim onset')
+axs[1, 0].annotate(f'fMRI', xy=(0, 0.5), xycoords='axes fraction',
+                xytext=(-0.3, 0.5), textcoords='axes fraction',
+                fontsize=12, fontweight='bold', rotation=90,
+                va='center', ha='center', annotation_clip=False)
 
+
+plotting.normalize_lims(axs[0, :])
+plotting.normalize_lims(axs[1, :])
+sns.despine(fig)
 
 # # Draw the legend outside the rightmost axis
 # fig.legend(
@@ -276,16 +297,31 @@ axs[4, 1].set_xlabel('TR after stim onset')
 #     bbox_transform=fig.transFigure
 # )
 
-ax = axs[-1, 0]
-ax.text(
-    0.5, 0.5,
-    'not recorded',
-    ha='center', va='center'
-)
+# ax = axs[-1, 0]
+# ax.text(
+#     0.5, 0.5,
+#     'not recorded',
+#     ha='center', va='center'
+# )
 
 # remove xticks and yticks
-ax.set_xticks([])
-ax.set_yticks([])
+# ax.set_xticks([])
+# ax.set_yticks([])
 
 fig.tight_layout(rect=[0, 0, 0.88, 1])  # leave space on the right for the legend
 plotting.savefig(fig, settings.plot_dir + f'/figures/fast_sequences_probabilities.png')
+
+#%% standalone legend figure for manual insertion into another graphic
+from matplotlib.lines import Line2D
+
+labels = ['Probability Image 1', 'Probability Image 2',
+          'Probability Image 3', 'Probability Image 4', 'Probability Image 5',
+          'Image onsets']
+handles = [Line2D([0], [0], color=c, linewidth=2) for c in settings.palette_wittkuhn1]
+handles.append(Line2D([0], [0], color='gray', linewidth=1, alpha=0.5))
+
+fig_leg = plt.figure(figsize=(3, 3))
+fig_leg.legend(handles, labels, ncol=1, loc='center', frameon=False,
+               title='Item position')
+savefig(fig_leg, settings.plot_dir + '/figures/legend_sequences.png',
+                bbox_inches='tight', dpi=300, transparent=True)

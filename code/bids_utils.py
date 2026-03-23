@@ -34,8 +34,15 @@ def _norm_subj(subject):
     s = str(subject).strip().replace('sub-', '')
     return f'{int(s):02d}'
 
+@mem.cache
+def get_decoding_accuracy_3T(subject):
+    """load decoding accuracy from localizer"""
+    subject = _norm_subj(subject)
+    df = pd.read_csv('../sourcedata_3T/source_data_figure_2a.csv')
+    acc = df[df.id==f'sub-{subject}']
+    return acc.mean_accuracy.values[0]
 
-def get_decoding_accuracy(subject):
+def get_decoding_accuracy_MEG(subject):
     """Load peak cross-validated decoding accuracy for a subject from the localizer gridsearch."""
     subject = _norm_subj(subject)
     deriv = layout_MEG.derivatives['derivatives']

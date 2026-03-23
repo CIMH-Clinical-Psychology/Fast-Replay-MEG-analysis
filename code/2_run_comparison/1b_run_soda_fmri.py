@@ -25,7 +25,7 @@ from bids import BIDSLayout
 from joblib import Parallel, delayed
 from scipy.stats import pearsonr, zscore
 from mne_bids import BIDSPath
-from mne.stats import permutation_t_test
+from mne.stats import permutation_t_test, permutation_cluster_1samp_test
 
 from meg_utils import misc
 from meg_utils import decoding, plotting, sigproc
@@ -97,159 +97,97 @@ for interval in intervals:
         tr_range = list(range(trs[0], trs[1]+1))
         sel = (df_slopes.interval==interval) & df_slopes.tr.isin(tr_range)
         df_slopes.loc[sel, 'period'] = period
-
-#%% group-level: slope curves and signflip permutations
-
 pkl_slopes = str(bids_base.copy().update(processing='soda', suffix='slopes', extension='.pkl.gz'))
 joblib.dump(df_slopes, pkl_slopes)
 
-fig, axs = plt.subplots(3, 5, figsize=[18, 9])
+#%% overview of mean slopes across intervals
+df_slopes = joblib.load(pkl_slopes)
+df_mean = df_slopes.groupby(['tr', 'interval', 'subject']).mean(True).reset_index()
+
+fig, ax = plt.subplots(1, 1, figsize=[8, 6])
+
+sns.lineplot(df_mean[df_mean.interval!=2048], x='tr', y='slope', hue='interval',
+             palette=settings.palette_wittkuhn2, ax=ax)
+ax.axhline(0, linestyle='--', c='black', alpha=0.3)
+ax.set(title='Slopes at different interval speeds')
+savefig(fig, settings.plot_dir + '/SODA_slopes_3T.png')
+#%% group-level: slope curves with cluster permutation and signflip tests
+
+df_slopes = joblib.load(pkl_slopes)
+
+intervals_plot = [iv for iv in intervals if iv != 2048]
+n_iv = len(intervals_plot)
+fig, axs = plt.subplots(1, n_iv, figsize=[4 * n_iv, 4])
+if n_iv == 1:
+    axs = [axs]
 
 df_mean = df_slopes.groupby(['tr', 'interval', 'subject']).mean(True).reset_index()
 
-df_perm = pd.DataFrame()
-
-for i, interval in enumerate(intervals):
+for i, interval in enumerate(intervals_plot):
 
     tr_fwd = settings.exp_tr[interval]['fwd']
-    tr_bkw= settings.exp_tr[interval]['bkw']
+    tr_bkw = settings.exp_tr[interval]['bkw']
 
-    # top: group mean ± SEM slope curve
-    ax = axs[0, i]
+    ax = axs[i]
 
     df_sel = df_mean[df_mean.interval==interval]
     sns.lineplot(df_sel, x='tr', y='slope', color=settings.palette_wittkuhn2[i],
                  ax=ax)
     ax.set_xticks(np.arange(1, 14))
     ax.axhline(0, linestyle='--', c='black', alpha=0.4)
-    ax.axvspan(*tr_fwd, color=sns.color_palette()[1], linewidth=1, alpha=0.2,
-               label=f'fwd')
-    ax.axvspan(*tr_bkw, color=sns.color_palette()[2], linewidth=1, alpha=0.2,
-               label=f'bkw')
+    ax.axvspan(*tr_fwd, color=settings.color_fwd, linewidth=1, alpha=0.2,
+               label='fwd period')
+    ax.axvspan(*tr_bkw, color=settings.color_bkw, linewidth=1, alpha=0.2,
+               label='bkw period')
 
-    ax.set_title(f'{interval=} s')
-    ax.legend()
-    if i>0:
+    ax.set_title(f'{interval=} ms')
+    if i > 0:
         ax.set_ylabel('')
 
-    slopes = misc.long_df_to_array(df_sel, 'slope',  columns=['subject', 'tr'])
-    slopes_bkw = slopes[:, tr_bkw[0]-1: tr_bkw[1]+1] # subselect backward period
-    slopes_fwd = slopes[:, tr_fwd[0]-1: tr_fwd[1]]   # subselect forward period
+    slopes = misc.long_df_to_array(df_sel, 'slope', columns=['subject', 'tr'])
 
-    # middle: signflip permutation test for forward
-    ax = axs[1, i]
-    t_obs_fwd, p_fwd, t_perms_fwd = permutation_t_test(slopes_fwd, tail=1, seed=i, verbose=0)
-    tdlm.plot_tval_distribution(max(t_obs_fwd), t_perms_fwd, color=sns.color_palette()[1],
-                                alternative='greater', bins=100, ax=ax)
-    ax.set_title('forward period t-val dist')
+    # test forward (slopes > 0) and backward (slopes < 0) significance
+    # plot significance bands above the data ylim to avoid overlap with axvspan
+    for d, (data, tail) in enumerate([(slopes, 1), (-slopes, 1)]):
 
-    # bottom: signflip permutation test for backward
-    ax = axs[2, i]
-    t_obs_bkw, p_bkw, t_perms_bkw = permutation_t_test(slopes_bkw, tail=-1, seed=i, verbose=0)
-    tdlm.plot_tval_distribution(min(t_obs_bkw), t_perms_bkw, color=sns.color_palette()[2],
-                                alternative='less', bins=100, ax=ax)
-    ax.legend(loc='upper left')
-    ax.set_title('backward period t-val dist')
+        # signflip permutation t-test
+        _, pvals, _ = permutation_t_test(data, tail=tail, seed=i, verbose=False)
+        clusters = misc.get_clusters(pvals < 0.05, start=1)
+        bounds = [b for significant, b in clusters if significant]
+        for b1, b2 in bounds:
+            ax.axvspan(b1 - 0.5, b2 + 0.5, alpha=0.4,
+                       color='black', ymin=0.9, ymax=1,
+                       label='signflip-perm p<0.05')
 
-    df_perm = pd.concat([df_perm, pd.DataFrame({
-        'interval': [interval, interval],
-        'direction': ['forward', 'backward'],
-        'p_value': [min(p_fwd), min(p_bkw)],
-        't_obs': [max(t_obs_fwd), min(t_obs_bkw)],
-    })], ignore_index=True)
+        # cluster-based permutation test
+        _, cl, cl_pvals, _ = permutation_cluster_1samp_test(data, tail=tail, seed=i, verbose=False)
+        sig_clusters = [c[0] for c, p in zip(cl, cl_pvals) if p < 0.05]
+        for b1, *_, b2 in sig_clusters:
+            ax.axvspan(b1 + 0.5, b2 + 1.5, alpha=0.4, hatch='///',
+                       color='grey', ymin=0.8, ymax=0.9,
+                       label='cluster-perm p<0.05')
 
-pkl_perm = str(bids_base.copy().update(processing='soda', suffix='permutations', extension='.pkl.gz'))
-joblib.dump(df_perm, pkl_perm)
-print(df_perm.to_string(index=False))
+plotting.normalize_lims(axs)
 
-plotting.normalize_lims(axs[0])
-# plotting.normalize_lims(axs[1])
-# plotting.normalize_lims(axs[2])
+# extend ylim so significance bands don't overlap with data/axvspan
+for ax in axs:
+    ymin, ymax = ax.get_ylim()
+    margin = (ymax - ymin) * 0.15
+    ax.set_ylim(ymin, ymax + margin)
+
+by_label = {}
+for ax in fig.axes:
+    for h, l in zip(*ax.get_legend_handles_labels()):
+        by_label.setdefault(l, h)
+
+fig.legend(by_label.values(), by_label.keys(), loc='upper right',
+           bbox_to_anchor=(0.99, 0.99), ncol=2, fontsize='small')
 
 fig.suptitle('fMRI SODA: Slopes during fast sequence presentation')
 savefig(fig, settings.plot_dir + '/figures/soda_slopes_all.png')
 
 stop
 
-
-#%% group-level: bootstrap participants
-
-n_iv = len(intervals)
-df_mean = df_slopes.groupby(['tr', 'interval', 'subject']).mean(True).reset_index()
-pkl_power_group = str(bids_base.copy().update(processing='soda', suffix='powergroup', extension='.pkl.gz'))
-
-def bootstrap_group(slopes, n_samples, n_draws=1000, rng=None):
-    n_subj = len(slopes)
-    rng = np.random.default_rng(rng)
-    all_idx = rng.integers(0, n_subj, (n_draws, n_samples))
-
-    ps = []
-    for i in range(n_draws):
-        slopes_sampled = slopes[all_idx[i]]
-        t_obs, p, t_perms = permutation_t_test(slopes_sampled, tail=1, seed=i, verbose=0)
-        ps.append(min(p))
-    return ps
-
-df_power = pd.DataFrame()
-for i, interval in enumerate(tqdm(intervals, desc='bootstrapping group level')):
-    tr_fwd = settings.exp_tr[interval]['fwd']
-    tr_bkw = settings.exp_tr[interval]['bkw']
-
-    df_sel = df_mean[df_mean.interval == interval]
-    slopes = misc.long_df_to_array(df_sel, 'slope', columns=['subject', 'tr'])
-    slopes_fwd = slopes[:, tr_fwd[0]-1:tr_fwd[1]]  # subselect forward period
-    slopes_bkw = slopes[:, tr_bkw[0]-1:tr_bkw[1]]  # subselect backward period
-
-    res1 = Parallel(n_jobs=4)(delayed(bootstrap_group)(slopes_fwd, n, rng=n) for n in tqdm(range(2, 80)))
-    res2 = Parallel(n_jobs=4)(delayed(bootstrap_group)(slopes_bkw*-1, n, rng=n) for n in tqdm(range(2, 80)))
-
-    power_fwd = [(np.array(p) < 0.05).mean() for p in res1]
-    power_bkw = [(np.array(p) < 0.05).mean() for p in res2]
-
-    df_tmp = pd.DataFrame({'power': power_fwd + power_bkw,
-                           'period': ['fwd']* len(power_fwd) + ['bkw']*len(power_bkw),
-                           'interval': interval,
-                           'n_samples': list(range(2, 80)) * 2})
-
-    df_power = pd.concat([df_power, df_tmp], ignore_index=True)
-
-joblib.dump(df_power, pkl_power_group)
-
-df_power = joblib.load(pkl_power_group)
-
-fig, axs = plt.subplots(2, n_iv, figsize=[4 * n_iv, 5], sharey=True, sharex=True)
-for i, interval in enumerate(intervals):
-    for j, period in enumerate(['fwd', 'bkw']):
-        df_sel = df_power[(df_power.interval==interval) & (df_power.period==period)]
-        n_sign = (df_sel.n_samples.iloc[(df_sel.power > 0.8).argmax()]
-                  if (df_sel.power > 0.8).any() else np.nan)
-
-        ax = axs[j, i]
-        sns.lineplot(df_sel, x='n_samples', y='power', ax=ax)
-        ax.axhline(0.8, c='gray', alpha=0.7, linestyle='--')
-        if not np.isnan(n_sign):
-            ax.axvline(n_sign, c='darkred', alpha=0.7, linestyle='--')
-            ax.text(n_sign + 1, 0.7, f'n={n_sign:.0f}', c='darkred')
-        ax.set(title=f'{interval=} ms, {period}',
-               ylabel='power\n(% significant)',
-               xlabel='bootstrapped sample size')
-
-fig.suptitle('Bootstrapped power analysis, resampled participants, forward period only')
-savefig(fig, settings.plot_dir + '/figures/soda_bootstrapped_grouplevel.png')
-
-
-fig, axs = plt.subplots(1, 2, figsize=[14, 6], sharey=True, sharex=True)
-for i, period in enumerate(['fwd', 'bkw']):
-    ax=axs[i]
-    df_sel = df_power[(df_power.period==period)]
-    sns.lineplot(df_sel, x='n_samples', y='power', hue='interval',
-                 palette=settings.palette_wittkuhn2, ax=ax)
-    ax.axhline(0.8, c='gray', alpha=0.7, linestyle='--')
-    ax.set(title=f'{"forward" if period=="fwd" else "backward"} period',
-               ylabel='power\n(% significant)',
-               xlabel='bootstrapped sample size')
-fig.suptitle('Bootstrapped power analysis, resampled participants, forward period only')
-savefig(fig, settings.plot_dir + '/figures/soda_bootstrapped_grouplevel_single.png')
 
 #%% participant-level: heatmap of slopes
 
@@ -324,68 +262,6 @@ for i, ((period, interval), df_sel) in enumerate(df_pval.groupby(['period', 'int
 sns.despine()
 savefig(fig, settings.plot_dir + '/figures/soda_participant_pvalues.png')
 
-
-#%% participant-level: bootstrap trials
-pkl_power_part = str(bids_base.copy().update(processing='soda', suffix='powerparticipants', extension='.pkl.gz'))
-
-def bootstrap_participants(slopes, n_samples, n_draws=10, rng=None):
-    """Randomly draw a subset of n_trials per participant with repetition."""
-    rng = np.random.default_rng(rng)
-    ps = []
-    for draw in range(n_draws):
-        px = []
-        for subj_idx in range(len(slopes)):
-            st = slopes[subj_idx]  # [n_trials, 1]
-            n_trials = len(st)
-            idx = rng.integers(0, n_trials, n_samples)
-            sampled = st[idx]
-            t_obs, p, t_perms = permutation_t_test(sampled, n_permutations=100,
-                                                   tail=1, seed=draw, verbose=0)
-            px += [min(p)]
-        ps.append(px)
-    return ps
-
-df_power = pd.DataFrame()
-
-for (interval, period), df_sel in tqdm(list(df_slopes.groupby(['interval', 'period'])),
-                                             'calculating p values'):
-
-    df_sel = df_sel.sort_values(['subject', 'trial', 'tr'])
-    n_trs = len(np.unique(df_sel.tr))
-    slopes = df_sel.slope.values.reshape([len(subjects), -1, n_trs])
-
-
-    slopes *= -1 if period=='bkw' else 1  # flip for backward period
-    res = Parallel(n_jobs=-1)(delayed(bootstrap_participants)(slopes, n, rng=n)
-                                  for n in range(2, 32))
-    powers = np.mean(np.array(res)<0.05, 1)
-    df_tmp = misc.to_long_df(powers, ['n_samples', 'subject'],
-                             n_samples=range(2, 32), subject=subjects,
-                             value_name='power')
-
-    df_tmp['interval'] = interval
-    df_tmp['period'] = period
-    df_power = pd.concat([df_power, df_tmp], ignore_index=True)
-
-
-joblib.dump(df_power, pkl_power_part)
-df_power = joblib.load(pkl_power_part)
-
-fig, axs = plt.subplots(2, 5, figsize=[20, 6], sharey=True, sharex=True)
-
-for i, interval in enumerate(intervals):
-    for j, period in enumerate(['fwd', 'bkw']):
-        df_sel = df_power[(df_power.interval == interval) & (df_power.period == period)]
-        ax = axs[j, i]
-        ax.clear()
-        sns.lineplot(df_sel, x='n_samples', y='power', hue='subject', ax=ax,
-                     legend=False)
-        ax.set(title=f'{interval=} ms, {period}')
-
-plotting.normalize_lims(axs)
-sns.despine()
-fig.suptitle('Bootstrapped power analysis, resampled trials')
-savefig(fig, settings.plot_dir + '/figures/soda_bootstrapped_participantlevel.png')
 
 #%% heatmap for trials of selected participants
 # np.random.seed(0)
@@ -592,6 +468,35 @@ sns.despine()
 fig.suptitle('Trial slope at expected TR: correct vs incorrect responses')
 savefig(fig, settings.plot_dir + '/figures/soda_vs_response.png')
 
+#%% decoding accuracy vs TDLM sequenceness (fwd / bkw, mean across speed conditions)
+
+import scipy.stats as stats
+import matplotlib.pyplot as plt
+
+dec_acc = np.array([bids_utils.get_decoding_accuracy_3T(s) for s in subjects])
+
+# sequenceness at lag 1 TR (index 0), mean across 32–512 ms conditions
+seq_fwd = np.mean([np.array([sf[iv][i][0] for i in range(len(subjects))])
+                   for iv in plot_intervals], axis=0)
+seq_bkw = np.mean([np.array([sb[iv][i][0] for i in range(len(subjects))])
+                   for iv in plot_intervals], axis=0)
+
+fig, axs = plt.subplots(1, 2, figsize=[10, 4])
+for ax, seq, direction in zip(axs, [seq_fwd, seq_bkw], ['fwd', 'bkw']):
+    r, p = stats.pearsonr(dec_acc, seq)
+    ax.scatter(dec_acc, seq, color='steelblue', alpha=0.6, edgecolors='white', linewidths=0.5)
+    m, b = np.polyfit(dec_acc, seq, 1)
+    x_line = np.linspace(dec_acc.min(), dec_acc.max(), 100)
+    ax.plot(x_line, m * x_line + b, color='steelblue', linewidth=1.5,
+            linestyle='--' if p > 0.05 else '-')
+    ax.set_xlabel('decoding accuracy')
+    ax.set_ylabel('sequenceness (lag 1 TR)')
+    ax.set_title(f'{direction}  r={r:.2f}, p={p:.3f}')
+
+fig.suptitle('Decoding accuracy vs TDLM sequenceness (mean across 32–512 ms)')
+fig.tight_layout()
+
+
 
 #%% supplement: inter-interval: subject consistency across ISI conditions
 
@@ -790,47 +695,32 @@ for interval in intervals:
         slope_sign = -1 if period == 'bkw' else 1
 
         slopes_peak = slopes[:, lo:hi].mean(-1) * slope_sign  # [n_subj]
+        n = len(slopes_peak)
         d = pg.compute_effsize(slopes_peak, y=0)
+        ci_lo, ci_hi = pg.compute_esci(d, nx=n, ny=n, paired=True)
         df_tmp = pd.DataFrame({'interval': interval,
                                'cohens d': d,
-                               'period': period,
-                               'type': 'mean'}, index=[0])
+                               'ci_lo': ci_lo,
+                               'ci_hi': ci_hi,
+                               'period': period}, index=[0])
         df_eff = pd.concat([df_eff, df_tmp])
 
-for interval in intervals:
-    for period in ['fwd', 'bkw']:
-        tr_range = settings.exp_tr[interval][period]
-        lo, hi = tr_range[0] - 1, tr_range[1]
-        slope_sign = -1 if period == 'bkw' else 1
-
-        for s_idx, subj in enumerate(subjects):
-            df_s = df_slopes[(df_slopes.interval == interval) & (df_slopes.subject == subj)]
-            trial_slopes = np.array([g.sort_values('tr')['slope'].values for _, g in df_s.groupby('trial')])
-            if len(trial_slopes) == 0:
-                continue
-            peak_slope = trial_slopes[:, lo:hi].mean(-1) * slope_sign
-            d = pg.compute_effsize(peak_slope, y=0)
-            df_tmp = pd.DataFrame({'interval': interval,
-                                   'cohens d': d,
-                                   'subject': subj,
-                                   'period': period,
-                                   'type': 'trials'}, index=[0])
-            df_eff = pd.concat([df_eff, df_tmp])
-
-fig, axs = plt.subplots(2, 2, figsize=[8, 8])
+fig, axs = plt.subplots(1, 2, figsize=[10, 4])
 
 for j, period in enumerate(['fwd', 'bkw']):
-    ax = axs[j, 0]
-    df_sel = df_eff[(df_eff.type == 'trials') & (df_eff.period == period)]
-    sns.boxplot(df_sel, x='interval', y='cohens d', fliersize=0, ax=ax)
-    sns.stripplot(data=df_sel, x='interval', y='cohens d', color='black', alpha=0.5, ax=ax)
-    ax.set_title(f'Participant\'s effect sizes ({period})')
-    ax.axhline(0, linestyle='--', alpha=0.5, c='black')
-
-    ax = axs[j, 1]
-    df_sel = df_eff[(df_eff.type == 'mean') & (df_eff.period == period)]
-    sns.boxplot(df_sel, x='interval', y='cohens d', fliersize=0, ax=ax)
-    ax.set_title(f'Group mean\'s effect size ({period})')
+    ax = axs[j]
+    df_sel = df_eff[df_eff.period == period].reset_index(drop=True)
+    x_pos = np.arange(len(df_sel))
+    ax.bar(x_pos, df_sel['cohens d'].values,
+           yerr=[df_sel['cohens d'].values - df_sel['ci_lo'].values,
+                 df_sel['ci_hi'].values - df_sel['cohens d'].values],
+           capsize=4, color=[settings.palette_wittkuhn2[i] for i in range(len(df_sel))],
+           edgecolor='black', linewidth=0.5)
+    ax.set_xticks(x_pos)
+    ax.set_xticklabels(df_sel['interval'].values)
+    ax.set_xlabel('interval')
+    ax.set_ylabel("Cohen's d")
+    ax.set_title(f"Group mean effect size ({period}, Cohen's d with 95% CI)")
     ax.axhline(0, linestyle='--', alpha=0.5, c='black')
 
 plotting.normalize_lims(axs)
