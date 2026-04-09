@@ -18,37 +18,42 @@ We download a subsection of the data from Wittkhn et al 2021. We will not reprod
 
 Download
 
+Assumption: You have downloaded the BIDS dataset to your local machine.
+
+##### 1. Set BIDS-path in Makefile
+
+in the `Makefile`, change the `BIDS_ROOT` to the directory where you cloned the BIDS directory to. Then call the following commands
 
 
-Assumption 1: You have downloaded the BIDS dataset to your local machine.
 
-Assumption 2: you have installed the requirements via `pip install -r requirements.txt`
+```shell
+make install       # install venv and mne_bids_pipeline
+make init          # initialize the derivatives dir
+make preprocessing # start the preprocessing, takes several hours
 
-Run the preprocessing pipeline with the following commands within the root directory (`fastreplay-MEG-analysis/`), replacing `BIDS_ROOT` with the directory where you stored the [fastreplay-MEG-bids](https://github.com/CIMH-Clinical-Psychology/fastreplay-MEG-bids) dataset, e.g. `/data/fastreplay/Fast-Replay-MEG-bids/`
+# alternatively, you can process participants in parallel 
+# on a SLURM cluster. Edit run_preprocessing.sbatch and then 
+# instead of the preprocessing command run 
+make preprocessing_slurm
+```
 
-Each session/task must be run independently as `mne_bids_pipeline` can't process rest and task data together yet.
+
+
+you have a SLURM cluster, you can call init and preprocessing seperately.
 
 ```bash
-export BIDS_ROOT=/zi/flstorage/group_klips/data/data/Simon/highspeed/highspeed-MEG-bids/
+export BIDS_ROOT=/data/highspeed/highspeed-MEG-bids/
 
-mne_bids_pipeline --task rest1 --root-dir $BIDS_ROOT --deriv_root $BIDS_ROOT/derivatives/ --config=preprocessing_pipeline_conf.py --steps init,preprocessing
-mne_bids_pipeline --task rest2 --root-dir $BIDS_ROOT --deriv_root $BIDS_ROOT/derivatives/  --config=preprocessing_pipeline_conf.py --steps init,preprocessing
-mne_bids_pipeline --task main --root-dir $BIDS_ROOT --deriv_root $BIDS_ROOT/derivatives/  --config=preprocessing_pipeline_conf.py --steps init,preprocessing
+# call only init, this is fast
+mne_bids_pipeline --task rest1 --root-dir $BIDS_ROOT --deriv_root $BIDS_ROOT/derivatives/ --config=preprocessing_pipeline_conf.py --steps init
+mne_bids_pipeline --task rest2 --root-dir $BIDS_ROOT --deriv_root $BIDS_ROOT/derivatives/  --config=preprocessing_pipeline_conf.py --steps init
+mne_bids_pipeline --task main --root-dir $BIDS_ROOT --deriv_root $BIDS_ROOT/derivatives/  --config=preprocessing_pipeline_conf.py --steps init
 
-# next run tasks with missing EOGs
-mne_bids_pipeline --task rest1 --root-dir $BIDS_ROOT --deriv_root $BIDS_ROOT/derivatives/ --config=preprocessing_pipeline_conf_eog-missing.py --steps init,preprocessing
-mne_bids_pipeline --task rest2 --root-dir $BIDS_ROOT --deriv_root $BIDS_ROOT/derivatives/  --config=preprocessing_pipeline_conf_eog-missing.py --steps init,preprocessing
-mne_bids_pipeline --task main --root-dir $BIDS_ROOT --deriv_root $BIDS_ROOT/derivatives/  --config=preprocessing_pipeline_conf_eog-missing.py --steps init,preprocessing
+# call preprocessing as an array job, much faster
+sbatch run_preprocessing.sbatch
 ```
 
-```python
-if username == 'user.name' and host=='hostname':  # VM
-    cache_dir = '/data/fastreplay/cache/'  # used for caching results, needs some GB of space 
-    bids_dir = '/data/fastreplay/Fast-Replay-MEG-bids/'  # BIDS_ROOT from above
-    plot_dir = f'{home}/Nextcloud/ZI/2024.10 FastReplayAnalysis/plots/'  # final plots will be saved here
-```
-
-## Running the analysis
+## Analysis
 
 The analysis can be run with running the scripts in the following order:
 
