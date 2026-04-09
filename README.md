@@ -14,17 +14,13 @@ We download a subsection of the data from Wittkhn et al 2021. We will not reprod
 
 2. clone the highspeed-analysis dir `datalad clone https://gin.g-node.org/lnnrtwttkhn/highspeed-analysis`
 
-### Preparation
+### Preprocessing
 
-Download
+
 
 Assumption: You have downloaded the BIDS dataset to your local machine.
 
-##### 1. Set BIDS-path in Makefile
-
-in the `Makefile`, change the `BIDS_ROOT` to the directory where you cloned the BIDS directory to. Then call the following commands
-
-
+In the `Makefile`, change the `BIDS_ROOT` to the directory where you cloned the BIDS directory to. Then call the following commands
 
 ```shell
 make install       # install venv and mne_bids_pipeline
@@ -37,21 +33,7 @@ make preprocessing # start the preprocessing, takes several hours
 make preprocessing_slurm
 ```
 
-
-
-you have a SLURM cluster, you can call init and preprocessing seperately.
-
-```bash
-export BIDS_ROOT=/data/highspeed/highspeed-MEG-bids/
-
-# call only init, this is fast
-mne_bids_pipeline --task rest1 --root-dir $BIDS_ROOT --deriv_root $BIDS_ROOT/derivatives/ --config=preprocessing_pipeline_conf.py --steps init
-mne_bids_pipeline --task rest2 --root-dir $BIDS_ROOT --deriv_root $BIDS_ROOT/derivatives/  --config=preprocessing_pipeline_conf.py --steps init
-mne_bids_pipeline --task main --root-dir $BIDS_ROOT --deriv_root $BIDS_ROOT/derivatives/  --config=preprocessing_pipeline_conf.py --steps init
-
-# call preprocessing as an array job, much faster
-sbatch run_preprocessing.sbatch
-```
+If there are no errors, you're preprocessed files should be ready and you can start the analysis.
 
 ## Analysis
 

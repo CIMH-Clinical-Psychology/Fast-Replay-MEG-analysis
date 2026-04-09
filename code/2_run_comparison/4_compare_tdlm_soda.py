@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import pingouin as pg
 import matplotlib.pyplot as plt
+from matplotlib.pyplot import GridSpec
 import settings
 from mne_bids import BIDSPath
 from settings import layout_MEG, layout_3T
@@ -68,17 +69,17 @@ for interval in settings.intervals_MEG:
         df_tdlm_subj = pd.concat([df_tdlm_subj, pd.DataFrame({
             'interval': interval, 'cohens d': d_subj}, index=[0])])
 
-# SODA/fMRI group mean effect sizes (fwd + bkw, excluding 2048)
+# SODA/fMRI group mean effect sizes (onset + offset, excluding 2048)
 soda_intervals = [iv for iv in settings.intervals_3T if iv != 2048]
 df_soda = pd.DataFrame()
 df_soda_subj = pd.DataFrame()
 for interval in soda_intervals:
     df_sel = df_mean[df_mean.interval == interval]
     slopes = long_df_to_array(df_sel, 'slope', columns=['subject', 'tr'])
-    for period in ['fwd', 'bkw']:
+    for period in ['onset', 'offset']:
         tr_range = settings.exp_tr[interval][period]
         lo, hi = tr_range[0] - 1, tr_range[1]
-        slope_sign = -1 if period == 'bkw' else 1
+        slope_sign = -1 if period == 'offset' else 1
         slopes_peak = slopes[:, lo:hi].mean(-1) * slope_sign
         n = len(slopes_peak)
         d = pg.compute_effsize(slopes_peak, y=0)
@@ -89,10 +90,10 @@ for interval in soda_intervals:
     # per-subject: Cohen's d across their trials
     for subj in df_slopes.subject.unique():
         df_s = df_slopes[(df_slopes.interval == interval) & (df_slopes.subject == subj)]
-        for period in ['fwd', 'bkw']:
+        for period in ['onset', 'offset']:
             tr_range = settings.exp_tr[interval][period]
             lo, hi = tr_range[0] - 1, tr_range[1]
-            slope_sign = -1 if period == 'bkw' else 1
+            slope_sign = -1 if period == 'offset' else 1
             trial_slopes = np.array([g.sort_values('tr')['slope'].values
                                      for _, g in df_s.groupby('trial')])
             if len(trial_slopes) == 0:
@@ -102,14 +103,17 @@ for interval in soda_intervals:
             df_soda_subj = pd.concat([df_soda_subj, pd.DataFrame({
                 'interval': interval, 'cohens d': d_subj, 'period': period}, index=[0])])
 
-# plot side by side
-fig, axs = plt.subplots(1, 2, figsize=[10, 4])
+#%% effect size: plot side by side
+fig, axs = plt.subplots(1, 2, figsize=[10, 5])
 
 # left: TDLM / MEG
 ax = axs[0]
+bar_width = 0.4
+
+ax.grid('on', axis='y', alpha=0.3)
 df_tdlm = df_tdlm.reset_index(drop=True)
 x_pos = np.arange(len(df_tdlm))
-ax.bar(x_pos, df_tdlm['cohens d'].values,
+ax.bar(x_pos, df_tdlm['cohens d'].values, width=bar_width,
        yerr=[df_tdlm['cohens d'].values - df_tdlm['ci_lo'].values,
              df_tdlm['ci_hi'].values - df_tdlm['cohens d'].values],
        capsize=4, color=[settings.palette_wittkuhn2[i] for i in range(len(df_tdlm))],
@@ -124,11 +128,16 @@ for i, interval in enumerate(settings.intervals_MEG):
     ys = df_tdlm_subj[df_tdlm_subj.interval == interval]['cohens d'].values
     ax.scatter(np.full(len(ys), i), ys, color='gray', alpha=0.3, s=10, zorder=3)
 
-# right: SODA / fMRI with fwd/bkw as grouped bars
+vals = df_tdlm["cohens d"]
+print(f'TDLM mean d: {vals.mean():.2f}, range: {vals.min():.2f} - {vals.max():.2f}')
+
+# right: SODA / fMRI with onset/offset as grouped bars
 ax = axs[1]
-bar_width = 0.35
-hatches = {'fwd': '', 'bkw': '//'}
-for j, period in enumerate(['fwd', 'bkw']):
+ax.grid('on', axis='y', alpha=0.3)
+
+# bar_width = 0.35
+hatches = {'onset': '', 'offset': '//'}
+for j, period in enumerate(['onset', 'offset']):
     df_p = df_soda[df_soda.period == period].reset_index(drop=True)
     x_pos = np.arange(len(df_p)) + j * bar_width
     ax.bar(x_pos, df_p['cohens d'].values,
@@ -136,7 +145,7 @@ for j, period in enumerate(['fwd', 'bkw']):
            yerr=[df_p['cohens d'].values - df_p['ci_lo'].values,
                  df_p['ci_hi'].values - df_p['cohens d'].values],
            capsize=3, color=[settings.palette_wittkuhn2[i] for i in range(len(df_p))],
-           edgecolor='black', linewidth=0.5,
+           edgecolor='white', linewidth=0.5,
            hatch=hatches[period], label=period)
 ax.set_xticks(np.arange(len(soda_intervals)) + bar_width / 2)
 ax.set_xticklabels(soda_intervals)
@@ -144,7 +153,7 @@ ax.set_xlabel('interval (ms)')
 ax.set_ylabel("Cohen's d")
 ax.set_title('SODA / fMRI')
 ax.axhline(0, linestyle='--', alpha=0.5, c='black')
-for j, period in enumerate(['fwd', 'bkw']):
+for j, period in enumerate(['onset', 'offset']):
     for i, interval in enumerate(soda_intervals):
         ys = df_soda_subj[(df_soda_subj.interval == interval) &
                           (df_soda_subj.period == period)]['cohens d'].values
@@ -152,87 +161,19 @@ for j, period in enumerate(['fwd', 'bkw']):
                    color='gray', alpha=0.3, s=10, zorder=3)
 from matplotlib.patches import Patch
 legend_handles = [Patch(facecolor='none', edgecolor='black', hatch=hatches[p], label=p)
-                  for p in ['fwd', 'bkw']]
-ax.legend(handles=legend_handles)
+                  for p in ['onset', 'offset']]
+ax.legend(handles=legend_handles, title='period')
+
+for period, df_tmp in df_soda.groupby('period'):
+    vals = df_tmp['cohens d']
+    print(f'SODA {period} mean d: {vals.mean():.2f}, range: {vals.min():.2f} - {vals.max():.2f}')
+
 
 plotting.normalize_lims(axs)
-fig.suptitle("Group mean effect size (Cohen's d with 95% CI)")
+fig.suptitle("Group mean effect size\n(Cohen's d)")
 fig.tight_layout()
 savefig(fig, settings.plot_dir + '/figures/compare_effect_sizes.png')
 
-#%% power contours: TDLM/MEG vs SODA/fMRI (ttest, 3×4, excl. 2048)
-
-from matplotlib.gridspec import GridSpec
-from matplotlib.lines import Line2D
-
-power_levels   = [0.5, 0.6, 0.7, 0.8, 0.9]
-contour_colors = ['#8b0000', '#f46d43', '#fdae61', '#d62728', '#fee08b']
-contour_widths = [1, 1, 1, 3, 1]
-power_intervals = [32, 64, 128, 512]  # exclude 2048
-
-# load ttest power data
-pkl_tdlm_power = bids_base_MEG.copy().update(processing='ttest', suffix='powercontour',
-                                              extension='.pkl.gz')
-df_tdlm_power = joblib.load(pkl_tdlm_power.fpath)
-
-pkl_soda_power = bids_base_3T.copy().update(processing='sodattest', suffix='powercontour',
-                                             extension='.pkl.gz')
-df_soda_power = joblib.load(pkl_soda_power.fpath)
-
-def _contour_ax(ax, df_power, interval, period=None, ylabel=True):
-    df_sel = df_power[df_power.interval == interval]
-    if period is not None:
-        df_sel = df_sel[df_sel.period == period]
-    df_pivot = df_sel.pivot_table(index='n_trials', columns='n_samples',
-                                  values='power', aggfunc='mean')
-    X, Y = np.meshgrid(df_pivot.columns.values, df_pivot.index.values)
-    Z = df_pivot.values
-    cf = ax.contourf(X, Y, Z, levels=np.linspace(0, 1, 21), cmap='Blues')
-    for lvl, col, lw in zip(power_levels, contour_colors, contour_widths):
-        ax.contour(X, Y, Z, levels=[lvl], colors=[col], linewidths=lw)
-    ax.set_xticks(np.arange(0, int(X.max()) + 10, 10))
-    ax.set_xlabel('n participants')
-    ax.set_ylabel('n trials' if ylabel else '')
-    return cf
-
-# two separate GridSpecs: MEG top, SODA bottom, with a gap in between
-fig = plt.figure(figsize=[16, 14])
-gs_meg  = GridSpec(1, 4, figure=fig, top=0.93, bottom=0.62, wspace=0.3)
-gs_soda = GridSpec(2, 4, figure=fig, top=0.50, bottom=0.06, hspace=0.45, wspace=0.3)
-ax_meg  = [fig.add_subplot(gs_meg[0, i])  for i in range(4)]
-ax_fwd  = [fig.add_subplot(gs_soda[0, i]) for i in range(4)]
-ax_bkw  = [fig.add_subplot(gs_soda[1, i]) for i in range(4)]
-
-cf = None
-for i, interval in enumerate(power_intervals):
-    cf = _contour_ax(ax_meg[i],  df_tdlm_power, interval,           ylabel=(i == 0))
-    cf = _contour_ax(ax_fwd[i],  df_soda_power, interval, 'fwd',    ylabel=(i == 0))
-    cf = _contour_ax(ax_bkw[i],  df_soda_power, interval, 'bkw',    ylabel=(i == 0))
-    ax_meg[i].set_title(f'{interval} ms')
-    ax_fwd[i].set_title(f'{interval} ms')
-    ax_bkw[i].set_title('')  # suppress duplicate titles on lower row
-
-# row y-labels
-ax_meg[0].set_ylabel('n trials')
-ax_fwd[0].set_ylabel('fwd\nn trials')
-ax_bkw[0].set_ylabel('bkw\nn trials')
-
-# bold section titles above each group
-fig.text(0.5, 0.955, 'TDLM / MEG', ha='center', va='bottom',
-         fontsize=13, fontweight='bold', transform=fig.transFigure)
-fig.text(0.5, 0.525, 'SODA / fMRI', ha='center', va='bottom',
-         fontsize=13, fontweight='bold', transform=fig.transFigure)
-
-# power level legend on first panel
-legend_handles = [Line2D([], [], color=col, linewidth=lw, label=f'{int(lvl*100)}%')
-                  for lvl, col, lw in zip(power_levels, contour_colors, contour_widths)]
-ax_meg[0].legend(handles=legend_handles, title='power', loc='upper right', frameon=True)
-
-# shared colorbar on right
-cax = fig.add_axes([0.94, 0.06, 0.015, 0.87])
-fig.colorbar(cf, cax=cax, label='power')
-
-savefig(fig, settings.plot_dir + '/figures/compare_power_contours.png', tight=False)
 
 #%% 80% power lines collapsed across speed conditions (all 3 methods, 1×3)
 
@@ -245,13 +186,26 @@ method_labels = ['t-test', 'perm. t-test', 'cluster']
 def _load_ttest_power(bids_base, processing):
     f = bids_base.copy().update(processing=processing, suffix='powercontour',
                                 extension='.pkl.gz')
-    return joblib.load(f.fpath) if f.fpath.is_file() else None
+    df = joblib.load(f.fpath)
+    if 'soda' in processing:
+        df['method'] = processing
+        mapping = {'fwd': 'onset', 'bkw': 'offset'}
+        df['period'] = df.period.apply(lambda x: mapping[x])
+        df = df[df.interval!=2048]
+    return df
 
 def _load_perm_power(bids_base, processing):
     template = bids_base.copy().update(processing=processing, suffix='powercontour',
                                        task='NSAMPLES', extension='.pkl.gz')
     files = sorted(glob(str(template.fpath).replace('task-NSAMPLES', 'task-*')))
-    return pd.concat([joblib.load(f) for f in files], ignore_index=True) if files else None
+    df = pd.concat([joblib.load(f) for f in files], ignore_index=True)
+
+    if 'soda' in processing:
+        df['method'] = processing
+        mapping = {'fwd': 'onset', 'bkw': 'offset'}
+        df['period'] = df.period.apply(lambda x: mapping[x])
+        df = df[df.interval!=2048]
+    return df
 
 # load all methods for TDLM/MEG and SODA/fMRI
 tdlm_methods = [
@@ -277,31 +231,20 @@ def _draw_80_line(ax, df, period=None, color='black', label=''):
     ax.contour(X, Y, Z, levels=[0.8], colors=[color], linewidths=2)
     ax.plot([], [], color=color, linewidth=2, label=label)  # proxy for legend
 
-# two GridSpecs: TDLM left, SODA fwd+bkw right
-fig = plt.figure(figsize=[14, 4.5])
-gs_tdlm = GridSpec(1, 1, figure=fig, left=0.07, right=0.33, top=0.82, bottom=0.15)
-gs_soda = GridSpec(1, 2, figure=fig, left=0.40, right=0.95, top=0.82, bottom=0.15,
-                   wspace=0.3)
-ax_tdlm = fig.add_subplot(gs_tdlm[0, 0])
-ax_fwd  = fig.add_subplot(gs_soda[0, 0])
-ax_bkw  = fig.add_subplot(gs_soda[0, 1], sharey=ax_fwd, sharex=ax_fwd)
+# two GridSpecs: TDLM left, SODA onset+offset right
+fig, (ax_tdlm, ax_soda) = plt.subplots(1, 2, figsize=[10, 5])
 
 for df, color, label in zip(tdlm_methods, method_colors, method_labels):
-    if df is not None:
-        _draw_80_line(ax_tdlm, df, color=color, label=label)
+    _draw_80_line(ax_tdlm, df, color=color, label=label)
 
 for df, color, label in zip(soda_methods, method_colors, method_labels):
-    if df is not None:
-        _draw_80_line(ax_fwd, df, period='fwd', color=color, label=label)
-        _draw_80_line(ax_bkw, df, period='bkw', color=color, label=label)
+    _draw_80_line(ax_soda, df, period='offset', color=color, label=label)
 
-for ax, title in [(ax_tdlm, ''), (ax_fwd, 'fwd'), (ax_bkw, 'bkw')]:
-    ax.set_xlabel('n participants')
-    ax.set_ylabel('n trials')
+for ax, title in [(ax_tdlm, 'TDLM\nforward sequenceness'), (ax_soda, 'SODA\noffset period')]:
+    ax.set_xlabel('bootstrapped sample size')
+    ax.set_ylabel('bootstrapped trials per participant')
     ax.set_title(title)
-    ax.legend(frameon=True)
+    ax.legend(title='80% power', frameon=True)
 
-fig.text(0.20, 0.88, 'TDLM / MEG',  ha='center', fontsize=12, fontweight='bold')
-fig.text(0.675, 0.88, 'SODA / fMRI', ha='center', fontsize=12, fontweight='bold')
-fig.suptitle('80% power (mean across speed conditions)', y=1.01)
+fig.suptitle('80% power of statistical methods')
 savefig(fig, settings.plot_dir + '/figures/compare_power_80.png')

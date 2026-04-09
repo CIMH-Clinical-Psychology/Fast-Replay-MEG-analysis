@@ -14,6 +14,7 @@ import joblib
 import numpy as np
 import pandas as pd
 import settings
+from pathlib import Path
 from settings import layout_MEG, layout_3T
 from meg_utils import misc
 from meg_utils.pipeline import DataPipeline, LoadRawStep, EpochingStep
@@ -36,11 +37,26 @@ def _norm_subj(subject):
 
 @mem.cache
 def get_decoding_accuracy_3T(subject):
-    """load decoding accuracy from localizer"""
+    """load decoding accuracy from localizer, for all subjects"""
     subject = _norm_subj(subject)
-    df = pd.read_csv('../sourcedata_3T/source_data_figure_2a.csv')
-    acc = df[df.id==f'sub-{subject}']
-    return acc.mean_accuracy.values[0]
+    df_subj = load_decoding_3T(subject, mask='cv', test_set='test-odd_peak')
+    df_subj = df_subj[df_subj['class']!='other']
+    df_subj = df_subj[df_subj['classifier']!='log_reg']
+    df_subj = df_subj.sort_values(['trial', 'classifier'])
+    proba = misc.long_df_to_array(df_subj, 'probability', ['trial', 'classifier'])
+    labels = list(df_subj.classifier.unique())
+    y_true = [labels.index(x) for x in df_subj.stim.values[::5]]
+    y_pred = np.argmax(proba, 1)
+    acc = np.mean(y_true==y_pred)
+    return acc
+
+def get_decoding_accuracies_3T():
+    """load decoding accuracy from localizer, for all subjects"""
+    subjects = [f'{i:02d}' for i in range(1, 41)]
+    accs = [get_decoding_accuracy_3T(subj) for subj in subjects]
+    df_accs = pd.DataFrame({'subject': subjects,
+                            'decoding accuracy': accs})
+    return df_accs
 
 def get_decoding_accuracy_MEG(subject):
     """Load peak cross-validated decoding accuracy for a subject from the localizer gridsearch."""
@@ -485,6 +501,7 @@ def load_responses_sequence_3T(subjects):
                                  .map({'true': True, '1': True, '1.0': True,
                                        'false': False, '0': False, '0.0': False}))
         df_final = pd.concat([df_final, df_choice], ignore_index=True)
+    df_final['interval_time'] = (df_final.interval_time_y * 1000).astype(int)
     return df_final
 
 @mem.cache

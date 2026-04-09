@@ -21,6 +21,7 @@ import matplotlib.pyplot as plt
 from meg_utils.plotting import savefig, normalize_lims
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 from meg_utils import misc
+from scipy.stats import f_oneway
 
 round_to_base = lambda data, base: np.round(data / base) * base
 
@@ -108,24 +109,95 @@ for i, df in enumerate([df_meg_proba, df_fmri_proba]):
     df = df[df.stimulus==df.classifier]
     ax = axs[i, 0]
     sns.lineplot(df, x='timepoint', y='probability', hue='serial_position',
-                 palette=settings.palette_wittkuhn2, ax=ax)
-    ax.legend(title='sequence position', loc='upper right')
+                 palette=settings.palette_wittkuhn1, ax=ax, legend=(i==0))
 
     ax = axs[i, 1]
     sns.lineplot(df, x='timepoint', y='probability', hue='interval',
-                 palette=settings.palette_wittkuhn2, ax=ax)
-    ax.legend(title='interval', loc='upper right')
+                 palette=settings.palette_wittkuhn2, ax=ax, legend=(i==0))
 
-    axs[i, 0].set(title='Serial Position')
-    axs[i, 1].set(title='Interval Speed')
+    if i==0:
+        ax.legend(title='interval', loc='upper right')
+        ax.legend(title='sequence position', loc='upper right')
 
-    axs[i, 0].set(ylabel=f'{cond}\nProbability (normalized)',
+    axs[i, 0].set(title='by Serial Position')
+    axs[i, 1].set(title='by Interval Speed')
+
+    axs[i, 0].set(ylabel='probability (normalized)',
                   xlabel='time after stim onset (s)')
-    axs[i, 1].set(ylabel=f'{cond}\nProbability (normalized)',
+    axs[i, 1].set(ylabel='probability (normalized)',
                   xlabel='time after stim onset (s)')
+    axs[i, 0].annotate(cond, xy=(0, 0.5), xycoords='axes fraction',
+                        xytext=(-80, 0), textcoords='offset points',
+                        va='center', ha='center', rotation=90,
+                        fontsize=16, fontweight='bold')
+
 fig.suptitle('Decoding Fast Images Individually')
 plotting.savefig(fig, f'{settings.plot_dir}/figures/fast_images_decoding.png')
-asd
+#%% statistical analysis
+
+
+# first peak decoding
+
+for i, df in enumerate([df_meg_proba, df_fmri_proba]):
+    mod = ['MEG', 'fMRI'][i]
+    df = df[df.stimulus==df.classifier]
+
+    for cond in ['serial_position', 'interval']:
+        var = 'timepoint' if mod=='MEG' else 'seq_tr'
+        peaks = []
+        df_tmp = df.groupby([var, 'subject', cond]).mean(True).reset_index()
+        for pos, df_pos in df_tmp.groupby([cond]):
+            arr = misc.long_df_to_array(df_pos, 'probability', ['subject', var])
+            peak = arr.argmax(1)
+            peaks += [peak]
+        # if i==1:
+        #     asdf
+        # one-way ANOVA: are peak timepoints equally distributed across positions?
+        F, p = f_oneway(*peaks)
+        print(f'{mod}, {cond}: : one-way ANOVA on peak timepoints across {len(peaks)} positions: '
+              f'F={F:.3f}, p={p:.4f}')
+
+# AUC of serial positions and interval speed
+for i, df in enumerate([df_meg_proba, df_fmri_proba]):
+    mod = ['MEG', 'fMRI'][i]
+    df = df[df.stimulus==df.classifier]
+
+    for cond in ['serial_position', 'interval']:
+
+        df_tmp = df.groupby(['subject', cond]).mean(True).reset_index()
+        aucs = misc.long_df_to_array(df_tmp, 'probability', [cond, 'subject'])
+
+        # one-way ANOVA: are aucs equally distributed across conditions?
+        F, p = f_oneway(*aucs)
+        print(f'{mod}, {cond}: one-way ANOVA on AUC across {len(aucs)} {cond}s {F=:.3f}, {p=:.4f}')
+
+
+# then look at interval speed, any condition has higher peak than other?
+
+for i, df in enumerate([df_meg_proba, df_fmri_proba]):
+    cond = ['MEG', 'fMRI'][i]
+    var = 'timepoint' if cond=='MEG' else 'seq_tr'
+    maxes = []
+    df = df[df.stimulus==df.classifier]
+    df_tmp = df.groupby([var, 'subject', 'interval']).mean(True).reset_index()
+
+    df_mean = df_tmp.groupby(var).mean(True).reset_index()
+    t_max = df_mean[var][df_mean.probability.argmax()]
+
+    maxes = misc.long_df_to_array(df_tmp[df_tmp[var]==t_max], 'probability',
+                                  ['interval' ,'subject'])
+
+
+        # asd
+    # if i==1:
+    #     asdf
+    # one-way ANOVA: are peak timepoints equally distributed across positions?
+    F, p = f_oneway(*maxes)
+    print(f'{cond}: one-way ANOVA on peak decoding across {len(maxes)} intervals: '
+          f'F={F:.3f}, p={p:.4f}')
+
+    # print(f'  mean peaks per position: {[p.mean() for p in peaks]}')
+
 #%% individual images probability visualized
 
 df = pd.DataFrame()

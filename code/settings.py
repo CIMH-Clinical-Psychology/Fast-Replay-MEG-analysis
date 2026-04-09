@@ -71,9 +71,9 @@ else:
 
 #%% convert to abspaths
 
-cache_dir = os.path.abspath(cache_dir)
-plot_dir = os.path.abspath(plot_dir)
-bids_dir_3T_decoding = os.path.abspath(bids_dir_3T_decoding)
+cache_dir = os.path.abspath(cache_dir) + '/'
+plot_dir = os.path.abspath(plot_dir) + '/'
+bids_dir_3T_decoding = os.path.abspath(bids_dir_3T_decoding) + '/'
 
 os.makedirs(cache_dir, exist_ok=True)
 
@@ -161,11 +161,11 @@ tr_duration = 1.25  # TR duration in seconds
 # for, taken from Wittkuhn et al (2021).
 # be aware: the indexing is using MATLAB style starting at 1!
 # the slope arrays are usually starting at TR 1 as well.
-exp_tr = {32:   {'fwd': [2, 4], 'bkw': [5, 7]},
-          64:   {'fwd': [2, 4], 'bkw': [5, 7]},
-          128:  {'fwd': [2, 4], 'bkw': [5, 8]},
-          512:  {'fwd': [2, 5], 'bkw': [6, 9]},
-          2048: {'fwd': [2, 7], 'bkw': [8, 13]}
+exp_tr = {32:   {'onset': [2, 4], 'offset': [5, 7]},
+          64:   {'onset': [2, 4], 'offset': [5, 7]},
+          128:  {'onset': [2, 4], 'offset': [5, 8]},
+          512:  {'onset': [2, 5], 'offset': [6, 9]},
+          2048: {'onset': [2, 7], 'offset': [8, 13]}
           }
 
 # time lags at which we expect the peak to be

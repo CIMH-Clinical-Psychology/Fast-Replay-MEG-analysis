@@ -95,7 +95,7 @@ pkl_out = bids_base.copy().update(processing='ttest', suffix='powercontour',
 
 assert pkl_seq.fpath.is_file(), f'File not found, did 1a script run? {pkl_seq.fpath}'
 
-max_trials = 48   # n_trials * 3
+max_trials = 64   # n_trials * 3
 max_samples = 90  # n_subjects *3
 n_draws = 1000
 

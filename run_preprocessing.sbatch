@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=meg_maxfilter
+#SBATCH --job-name=highspeed_preprocessing
 #SBATCH --output=/zi/home/simon.kern/slurmlogs/slurm_%x_%A-%a.out
 #SBATCH --error=/zi/home/simon.kern/slurmlogs/slurm_%x_%A-%a.err
 #SBATCH --time=05:00:00

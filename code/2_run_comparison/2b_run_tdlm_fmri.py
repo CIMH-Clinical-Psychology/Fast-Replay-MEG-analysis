@@ -6,6 +6,7 @@ Code to run TDLM (Temporally Delayed Linear Modelling) on fMRI data
 
 @author: Simon.Kern
 """
+import sys; sys.path.append('..')
 import os
 import settings
 import bids_utils
@@ -16,6 +17,9 @@ import pandas as pd
 import mne
 from meg_utils import decoding, plotting, sigproc
 import tdlm
+import matplotlib.pyplot as plt
+from mne.stats import permutation_t_test, permutation_cluster_1samp_test
+from meg_utils import misc
 
 #%% settings
 subjects = [f'{i:02d}' for i in range(1, 41)]
@@ -23,13 +27,13 @@ normalization = 'lambda x: x/x.mean(0)'
 
 layout = BIDSLayout(settings.bids_dir_3T)
 
-#%% TR: TDLM on super trials
+#%% TR: TDLM on fMRI data individual trials and supertrials
 intervals = ['0.032', '0.128', '0.064', '0.512', '2.048']
 categories = ['cat', 'chair', 'face', 'house', 'shoe']
 
-sf        = {interval: [] for interval in intervals}
+sf        = {interval: [] for interval in intervals}  # averaged trials
 sb        = {interval: [] for interval in intervals}
-sf_single = {interval: [] for interval in intervals}
+sf_single = {interval: [] for interval in intervals}  # individual trials
 sb_single = {interval: [] for interval in intervals}
 
 for subject in tqdm(subjects):
@@ -37,13 +41,12 @@ for subject in tqdm(subjects):
                                                 classifier=categories)
     df_seq = bids_utils.load_trial_data_3T(subject)
 
-    intervals = df_probas.tITI.unique()
     tf = tdlm.seq2tf('ABCDE')
 
     probas = {interval: [] for interval in intervals}
     for (t1, df_p), (t2, df_s) in zip(df_probas.groupby('trial'), df_seq.groupby('trial')):
         assert t1==t2
-        interval = df_s.tITI.values[0]
+        interval = str(df_s.tITI.values[0])
         seq_labels = list(df_s.stim_label.values[0])
         proba = [df_p[df_p.classifier==label].probability.values for label in seq_labels]
         probas[interval] += [proba]
@@ -58,144 +61,113 @@ for subject in tqdm(subjects):
         sf_single[interval] += [np.mean([r[0] for r in results], axis=0)]
         sb_single[interval] += [np.mean([r[1] for r in results], axis=0)]
 
-plot_intervals = [iv for iv in intervals if iv < 1.0]  # exclude 2048 ms
-xticks     = np.arange(0, 40, 10)
-xticklabels = [0, 1.25, 2.5, 3.75]
-iv_labels  = [int(iv * 1000) for iv in sorted(plot_intervals)]
+#%% plotting
+plot_intervals = intervals[:-1]  # exclude 2048 ms
+xticks     = [0, 10, 16.5, 20, 30]
+xticklabels = [0, 1.25, 2.048, 2.5, 3.75]
+iv_labels  = plot_intervals
 
 # 1×1: all 32–512 ms overlaid (supertrials)
-fig, ax = plt.subplots(1, 1, figsize=[6, 4])
-for i, interval in enumerate(sorted(plot_intervals)):
-    tdlm.plot_sequenceness(sf[interval], sb[interval],
-                           maxlag=3, which=['fwd'],
-                           color=settings.palette_wittkuhn2[i],
-                           ax=ax, clear=False, plot95=False, plotmax=i==0)
-ax.set_title('TDLM fMRI – supertrials (32–512 ms)')
-ax.legend(iv_labels, title='interval (ms)')
-ax.set_xticks(xticks, xticklabels)
-ax.set_xlabel('time lag (s)')
-ax.set_ylim(-3, 3)
+fig, axs = plt.subplots(1, 2, figsize=[14, 4])
 
-# 1×2: single trials (left) vs supertrials (right)
-fig, axs = plt.subplots(1, 2, figsize=[12, 4], sharey=True)
+ax = axs[0]
 for i, interval in enumerate(sorted(plot_intervals)):
-    tdlm.plot_sequenceness(sf_single[interval], sb_single[interval],
-                           maxlag=3, which=['fwd'],
-                           color=settings.palette_wittkuhn2[i],
-                           ax=axs[0], clear=False, plot95=False, plotmax=i==0)
     tdlm.plot_sequenceness(sf[interval], sb[interval],
                            maxlag=3, which=['fwd'],
                            color=settings.palette_wittkuhn2[i],
-                           ax=axs[1], clear=False, plot95=False, plotmax=i==0)
-for ax, title in zip(axs, ['single trials', 'supertrials']):
+                           ax=ax, clear=False, plot95=False,
+                           plotmax=i==0)
+
+ax.set_title('32 to 512 ms condition')
+from matplotlib.lines import Line2D
+legend_handles = [Line2D([0], [0], color=settings.palette_wittkuhn2[i], lw=2)
+                  for i in range(len(plot_intervals))]
+ax.legend(legend_handles, [f'{int(float(x)*1000)} ms' for x in sorted(plot_intervals)],  loc='lower left')
+ax.set_xticks(xticks, xticklabels)
+ax.axhline(0, linestyle='--', c='gray', alpha=0.3)
+ax.set_xlabel('time lag (s)')
+# ax.set_ylim(-1.2, 3)
+
+# signflip and cluster permutation tests per interval on axs[0]
+ax = axs[0]
+xlim = ax.get_xlim()
+for i, interval in enumerate(sorted(plot_intervals)):
+    sx = np.array(sf[interval])[:, 0, 1:]
+
+    # signflip permutation t-test
+    _, pvals, _ = permutation_t_test(sx, seed=i, verbose=False)
+    clusters = misc.get_clusters(pvals < 0.05, start=1)
+    bounds = [b for significant, b in clusters if significant]
+    for b1, b2 in bounds:
+        ax.axvspan(max(b1*10 - 5, xlim[0]), min(b2*10 + 5, xlim[1]), alpha=0.3,
+                   color=settings.palette_wittkuhn2[i], ymin=0.95, ymax=1,
+                   label=f'signflip-perm p<0.05' if i == 0 else '')
+
+    # cluster-based permutation test
+    _, cl, cl_pvals, _ = permutation_cluster_1samp_test(sx, seed=i, verbose=False)
+    sig_clusters = [c[0] for c, p in zip(cl, cl_pvals) if p < 0.05]
+    for cl in sig_clusters:
+        b1, b2 = cl[0], cl[-1]
+        ax.axvspan(max(b1*10 + 5, xlim[0]), min(b2*10 + 15, xlim[1]), alpha=0.5, hatch='///',
+                   color=settings.palette_wittkuhn2[i], ymin=0.9, ymax=0.95,
+                   label=f'cluster-perm p<0.05' if i == 0 else '')
+
+# 1×2: single trials (left) vs supertrials (right) of 2048er condition
+interval = '2.048'
+tdlm.plot_sequenceness(sf_single[interval], sb_single[interval],
+                       maxlag=3, which=['fwd'],
+                       color=settings.palette_wittkuhn2[-2],
+                       ax=axs[1], clear=False, plot95=False, plotmax=1)
+# tdlm.plot_sequenceness(sf[interval], sb[interval],
+#                        maxlag=3, which=['fwd'],
+#                        color=settings.palette_wittkuhn2[-2],
+#                        ax=axs[2], clear=False, plot95=False, plotmax=1)
+
+for ax, title, sx in zip(axs[1:2],
+                         ['2048 ms condition', 'averaged trials\n2048 ms condition'],
+                         [sf_single['2.048'], sf['2.048']]):
     ax.set_title(title)
-    ax.legend(iv_labels, title='interval (ms)')
+    ax.legend(['2048 ms'], title='interval (ms)')
     ax.set_xticks(xticks, xticklabels)
     ax.set_xlabel('time lag (s)')
-axs[0].set_ylabel('sequenceness')
-fig.suptitle('TDLM fMRI – single trials vs supertrials')
+    ax.axhline(0, linestyle='--', c='gray', alpha=0.3)
+
+    # expected time lag for 2048 ms condition (in plot units: 10 = 1 TR = 1.25s)
+    expected_lag = 2.048 / 1.25 * 10
+    ax.axvspan(expected_lag - 1, expected_lag + 1, color='black', alpha=0.15,
+               label='expected lag', ymax=0.9)
+
+    # signflip permutation t-test
+    xlim = ax.get_xlim()
+    sx_data = np.array(sx)[:, 0, 1:]
+    _, pvals, _ = permutation_t_test(sx_data, seed=0, verbose=False)
+    clusters = misc.get_clusters(pvals < 0.05, start=1)
+    bounds = [b for significant, b in clusters if significant]
+    for b1, b2 in bounds:
+        ax.axvspan(max(b1*10 - 5, xlim[0]), min(b2*10 + 5, xlim[1]), alpha=0.3,
+                   color=settings.palette_wittkuhn2[-2], ymin=0.95, ymax=1,
+                   label='signflip-perm p<0.05')
+
+    # cluster-based permutation test
+    _, cl, cl_pvals, _ = permutation_cluster_1samp_test(sx_data, seed=0, verbose=False)
+    sig_clusters = [c[0] for c, p in zip(cl, cl_pvals) if p < 0.05]
+    for cl in sig_clusters:
+        b1, b2 = cl[0], cl[-1]
+        ax.axvspan(max(b1*10 + 5, xlim[0]), min(b2*10 + 15, xlim[1]), alpha=0.5, hatch='///',
+                   color=settings.palette_wittkuhn2[-2], ymin=0.9, ymax=0.95,
+                   label='cluster-perm p<0.05')
+
+axs[0].set_ylabel('forward sequenceness')
+axs[1].set_ylabel('forward sequenceness')
+fig.suptitle('TDLM on fMRI')
 
 
-#%% TR: interpolated TDLM on super trials
-intervals = ['0.032', '0.128', '0.064', '0.512', '2.048']
-categories = ['cat', 'chair', 'face', 'house', 'shoe']
-df = pd.DataFrame()
-sf = {interval: [] for interval in intervals}
-sb = {interval: [] for interval in intervals}
+by_label = {}
+for ax in fig.axes:
+    for h, l in zip(*ax.get_legend_handles_labels()):
+        by_label.setdefault(l, h)
+del by_label['fwd']
+fig.legend(by_label.values(), by_label.keys(), loc='upper right',
+           bbox_to_anchor=(0.99, 1), ncol=2, fontsize='small')
 
-
-
-for subject in tqdm(subjects):
-    df_probas = load_decoding_3T(subject,
-                                test_set='test-seq_long',
-                                mask='cv')
-    df_probas = df_probas[df_probas.classifier.isin(categories)]
-    df_probas = df_probas[df_probas['class'].isin(categories)]
-    df_seq = bids_utils.load_sequences_3T(subject)
-
-    intervals = df_probas.tITI.unique()
-    sf_subj = {interval: [] for interval in intervals}
-    sb_subj = {interval: [] for interval in intervals}
-
-    tf = tdlm.seq2tf('ABCDE')
-
-    # extract the sequences
-    probas = {interval:[] for interval in intervals}
-    for (t1, df_p), (t2, df_s) in zip(df_probas.groupby('trial'), df_seq.groupby('trial')):
-        assert t1==t2
-        interval = df_s.tITI.values[0]
-        seq_labels = list(df_s.stim_label.values[0])
-        proba = [df_p[df_p.classifier==label].probability.values for label in seq_labels]
-        probas[interval] += [proba]
-
-    for i, interval in enumerate(intervals):
-        mean_proba = np.mean(probas[interval], axis=0).T
-        probas_fitted = []
-        plt.figure()
-        for proba in mean_proba.T:
-            amp_guess   = proba.max()             # peak height
-            shift_guess = (np.arange(13)*1.25)[np.argmax(proba)]  # peak location
-            initial_params = {
-                "frequency": [(0.01, 0.2), 0.1],                 # fixed at 10 Hz
-                "amplitude": [(amp_guess, 2 * amp_guess), amp_guess],      # start at peak
-                "loc":     [(0, 13*1.25), shift_guess],
-                "baseline":  [(0, 0), 0.0],                        # pinned to 0
-            }
-            fitted_t, fitted, _= sigproc.fit_curve(proba, model=sigproc.curves.sine_truncated,
-                                            curve_params=initial_params,
-                                            plot_fit=True)
-            probas_fitted += [fitted]
-
-        probas_fitted = np.transpose(probas_fitted)
-        max_lag = int(float(interval)*1000/10 + 10)
-        sf_subj, sb_subj = tdlm.compute_1step(probas_fitted, tf=tf, max_lag=max_lag)
-        sf[interval] += [sf_subj]
-        sb[interval] += [sb_subj]
-
-
-
-fig, ax = plt.subplots(1, 1)
-for i, interval in enumerate(intervals):
-    # plt.figure()
-    tdlm.plot_sequenceness(sf[interval], sb[interval],
-                           maxlag=5,
-                           which=['fwd'],
-                           color=settings.palette_wittkuhn2[i],
-                           # ax=ax,
-                           clear=False,
-                           plot95=False,
-                           plotmax=False)
-    plt.title(interval)
-ax.set_title('TDLM on model fit')
-ax.legend([32, '_', '_', 64, 128, 512, 2048], title='interval')
-ax.set_xticks(np.arange(0, 50, 10), [0, 1, 2, 3, 4])
-ax.set_xlabel('time lag (seconds)')
-plt.ylim(-2, 2)
-
-#%% decoding accuracy vs TDLM sequenceness (fwd / bkw, mean across speed conditions)
-
-import scipy.stats as stats
-import matplotlib.pyplot as plt
-
-dec_acc = np.array([bids_utils.get_decoding_accuracy_3T(s) for s in subjects])
-
-# sequenceness at lag 1 TR (index 0), mean across 32–512 ms conditions
-seq_fwd = np.mean([np.array([sf[iv][i][0] for i in range(len(subjects))])
-                   for iv in plot_intervals], axis=0)
-seq_bkw = np.mean([np.array([sb[iv][i][0] for i in range(len(subjects))])
-                   for iv in plot_intervals], axis=0)
-
-fig, axs = plt.subplots(1, 2, figsize=[10, 4])
-for ax, seq, direction in zip(axs, [seq_fwd, seq_bkw], ['fwd', 'bkw']):
-    r, p = stats.pearsonr(dec_acc, seq)
-    ax.scatter(dec_acc, seq, color='steelblue', alpha=0.6, edgecolors='white', linewidths=0.5)
-    m, b = np.polyfit(dec_acc, seq, 1)
-    x_line = np.linspace(dec_acc.min(), dec_acc.max(), 100)
-    ax.plot(x_line, m * x_line + b, color='steelblue', linewidth=1.5,
-            linestyle='--' if p > 0.05 else '-')
-    ax.set_xlabel('decoding accuracy')
-    ax.set_ylabel('sequenceness (lag 1 TR)')
-    ax.set_title(f'{direction}  r={r:.2f}, p={p:.3f}')
-
-fig.suptitle('Decoding accuracy vs TDLM sequenceness (mean across 32–512 ms)')
-fig.tight_layout()
+plotting.savefig(fig, settings.plot_dir + '/figures/TDLM_fMRI_overview.png')

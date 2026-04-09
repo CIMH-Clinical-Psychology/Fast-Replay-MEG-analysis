@@ -62,7 +62,7 @@ rest_epochs_duration = 2
 rest_epochs_overlap = 0
 epochs_tmin = 0
 
-# on_error  = 'continue'
+on_error  = 'debug'
 baseline = None
 
 # %%

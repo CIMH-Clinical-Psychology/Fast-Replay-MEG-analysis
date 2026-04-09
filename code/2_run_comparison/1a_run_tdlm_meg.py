@@ -23,7 +23,7 @@ from meg_utils.plotting import savefig, normalize_lims
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 import tdlm
 from tdlm.utils import seq2tf, num2char
-from scipy.stats import zscore, pearsonr
+from scipy.stats import zscore, pearsonr, ttest_1samp
 import contextprofiler
 from joblib import Parallel, delayed
 from mne_bids import BIDSPath
@@ -33,7 +33,7 @@ from mne.stats import permutation_cluster_1samp_test
 from mne.stats import permutation_t_test
 #%% settings
 
-zscore = lambda x, **kwargs: x
+# zscore = lambda x, **kwargs: x
 
 normalization = 'lambda x: x/x.mean(0)'
 subjects = [f'sub-{i:02d}' for i in range(1, 31)]
@@ -105,9 +105,9 @@ for subject in tqdm(layout.subjects, 'calculating TDLM'):
         # ie.. prevent interactions of double time lag from img1 to img3
         # image onsets |-----|-----|--
         # mag lag      |........|
-        # max_lag = int(((interval/10) + 10)*1.5)
+        max_lag = int(((interval/10) + 10)*1.5)
         # CHANGED, take same fixed max lag for all conditions
-        max_lag = 91
+        # max_lag = 91
 
         # only analyse the time window up to the length that the images shown
         # else we are analysing the buffer period already.
@@ -119,11 +119,11 @@ for subject in tqdm(layout.subjects, 'calculating TDLM'):
 
         df_subj = pd.concat([df_subj, pd.DataFrame({'sequenceness': sf_trial[0],
                                                    'direction': 'forward',
-                                                   'interval': interval,
+                                                   'interval': int(interval),
                                                    'lag': np.arange(max_lag+1)*10}),
                                      pd.DataFrame({'sequenceness': sb_trial[0],
                                                    'direction': 'backward',
-                                                   'interval': interval,
+                                                   'interval': int(interval),
                                                    'lag': np.arange(max_lag+1)*10})])
 
         # zscore trial
@@ -157,12 +157,13 @@ sf_mean = res['sf_mean']
 df_seq = res['df_seq']
 df_mean = df_seq.groupby(['subject', 'interval', 'lag', 'direction']).mean().reset_index()
 
-fig, ax = plt.subplots(1, 1, figsize=[8, 6])
+fig, ax = plt.subplots(1, 1, figsize=[8, 4])
 sns.lineplot(df_mean[df_mean.direction=='forward'], x='lag', y='sequenceness', hue='interval',
              palette=settings.palette_wittkuhn2, ax=ax)
 ax.axhline(0, linestyle='--', c='black', alpha=0.3)
 ax.set(title='Sequenceness at different interval speeds')
-savefig(fig, settings.plot_dir + '/TDLM_sequenceness_MEG.png')
+ax.set_ylabel('Sequenceness')
+savefig(fig, settings.plot_dir + '/figures/TDLM_sequenceness_MEG.png')
 
 #%% group-level: sequenceness
 res = joblib.load(pkl_seq)
@@ -173,8 +174,12 @@ sb_mean = res['sb_mean']
 df_seq = res['df_seq']
 
 #### sequenceness curves and signflip permutations
-fig, axs = plt.subplots(2, 2, figsize=[14, 8], dpi=80)
-axs = axs.flatten()
+max_lags = [np.round(int(((iv/10) + 10))/3).astype(int) for iv in intervals]
+mosaic = ''.join([f'{i}'*l for i, l in enumerate (max_lags)])
+
+fig, axs = plt.subplot_mosaic(mosaic, figsize=[18, 4], dpi=80, sharey=True)
+# fig, axs = plt.subplots(2, 2, figsize=[14, 8], dpi=80)
+axs = list(axs.values())
 
 for i, interval in enumerate(intervals):
 
@@ -184,29 +189,33 @@ for i, interval in enumerate(intervals):
                                     which=['fwd', 'bkw'],
                                     ax=ax, plot95=False, rescale=False)
 
-    ax.annotate(f'{interval} ms', xy=(0, 0.5), xycoords='axes fraction',
-                xytext=(-0.2, 0.5), textcoords='axes fraction',
-                fontsize=12, fontweight='bold', rotation=90,
-                va='center', ha='center', annotation_clip=False)
+    # ax.annotate(f'{interval} ms', xy=(0, 0.5), xycoords='axes fraction',
+    #             xytext=(-0.2, 0.5), textcoords='axes fraction',
+    #             fontsize=12, fontweight='bold', rotation=90,
+    #             va='center', ha='center', annotation_clip=False)
 
-    ax.axvspan((interval+100)-10, (interval+100)+10, color='black', alpha=0.3,
-               label='expected lag', ymax=0.8)
+    ax.axvspan((interval+100)-10, (interval+100)+10, color='black', alpha=0.15,
+               label='expected lag', ymax=0.9)
     # ax.set_ylim([-2, 2])
-    # if interval==512:
-    ax.set_xticks(np.arange(0, max(ax.get_xticks()), 100))
 
-    ax.set_xticks(list(ax.get_xticks()) + [int(interval+100)])
+    ax.set_xticks(np.arange(0, max(ax.get_xticks()), 100))
+    ticks = list(ax.get_xticks())
+    if interval==512:
+        ticks.remove(600)
+    ax.set_xticks(ticks + [int(interval+100)])
 
     for label in ax.get_xticklabels():
         label.set_rotation(45)
 
-    ax.set_title(f'{interval=} ms')
-    # Apply updated ticks
-    fig.suptitle('MEG: Sequenceness during fast sequence presentation')
 
-    # signflip permutation
-plotting.normalize_lims(axs)
+    ax.set_ylabel('' if i>0 else 'Sequenceness\n(z-scored)')
 
+    ax.set_title(f'{interval} ms')
+    fig.suptitle('TDLM on MEG\nSequenceness during fast sequence presentation')
+
+plotting.normalize_lims(axs, which='y')
+
+# signflip permutation
 for i, interval in enumerate(intervals):
     ax = axs[ i]
     # first check forward sequencenes
@@ -220,14 +229,27 @@ for i, interval in enumerate(intervals):
         for b1, b2 in bounds:
             ax.axvspan(b1*10-5, b2*10+5, alpha=0.3, linestyle='-', linewidth=3,
                        color=settings.color_bkw if d else settings.color_fwd,
-                       ymin=0.9, ymax=1, label=f'{direction} signlip-perm<0.05')
+                       ymin=0.95, ymax=1, label=f'{direction} signlip-perm<0.05')
 
         _, clusters, pvals, _ = permutation_cluster_1samp_test(sx, seed=i, verbose=False)
         clusters = [c[0] for c, p in zip(clusters, pvals) if p<0.05]
-        for b1, *_, b2 in clusters:
+        for cl in clusters:
+            b1, b2 = cl[0], cl[-1]
             ax.axvspan(b1*10+5, b2*10+15, alpha=0.6, linestyle='--', linewidth=3,
                        color=settings.color_bkw if d else settings.color_fwd,
-                       ymin=0.8, ymax=0.9, label=f'{direction} cluster-perm<0.05')
+                       ymin=0.9, ymax=0.95, label=f'{direction} cluster-perm<0.05')
+
+        # t-test at expected lag ±10ms against zero
+        expected_lag_ms = interval + 100
+        center_idx = round(expected_lag_ms / 10) - 1  # index after 1: slicing
+        lag_slice = slice(max(0, center_idx - 1), center_idx + 2)  # ±10ms
+        mean_at_lag = sx[:, lag_slice].mean(axis=1)  # per subject mean across window
+        t, p = ttest_1samp(mean_at_lag, 0)
+        if p < 0.05:
+            ylim = ax.get_ylim()
+            ypos = ylim[0] + (ylim[1] - ylim[0]) * 0.05
+            ax.plot(expected_lag_ms, ypos, '*', color='black', markersize=8,
+                    zorder=10, label=f'{direction} t-test p<0.05')
     ax.get_legend().remove()
 
 by_label = {}
@@ -235,65 +257,11 @@ for ax in fig.axes:
     for h, l in zip(*ax.get_legend_handles_labels()):
         by_label.setdefault(l, h)
 
-fig.legend(by_label.values(), by_label.keys(), loc="upper right", bbox_to_anchor=(1.5, 0.85))
-
+fig.legend(by_label.values(), by_label.keys(), loc="upper right", bbox_to_anchor=(1, 0.95))
+# fig.tight_layout()
 savefig(fig, f'{settings.plot_dir}/figures/fast_images_sequenceness_all.png')
 
 
-#%% DEPRECATED group-level: bootstrap participants
-
-def bootstrap_group(sf, n_samples, n_draws=1000, rng=None):
-    n_subj = len(sf)
-    rng = np.random.default_rng(rng)
-    all_idx = rng.integers(0, n_subj, (n_draws, n_samples))
-
-    ps = []
-    ts = []
-    for i in range(n_draws):
-        idx = all_idx[i]
-        sf_sampled = sf[idx]
-        p, t_obs, t_perms = tdlm.signflit_test(sf_sampled, rng=rng, n_perms=1000)
-        ps += [p]
-        ts += [t_obs]
-    return ps, ts
-
-df_power = pd.DataFrame()
-for i, interval in enumerate(tqdm(intervals, desc='bootstrapping')):
-    sf = sf_mean[interval][:, 0, :]
-
-    # signflip_test is already using all cores, so no improvements here.
-    res = Parallel(n_jobs=-1)(delayed(bootstrap_group)(sf, n, rng=n) for n in range(2, 60))
-    power = [(np.array(p)<0.05).mean() for p, _ in res]
-
-    df_tmp = pd.DataFrame({'power': power,
-                           'interval': interval,
-                           'n_samples': range(2, 60)})
-    df_power = pd.concat([df_power, df_tmp], ignore_index=True)
-
-csv_file = bids_base.copy().update(processing='group', suffix='power', extension='csv.gz')
-csv_file.mkdir()
-df_power.to_csv(csv_file)
-
-df_power = pd.read_csv(csv_file)
-
-fig, axs = plt.subplots(1, 4, figsize=[12, 3], sharey=True, sharex=True)
-for i, interval in enumerate(intervals):
-    df_sel = df_power[df_power.interval==interval]
-    # sample size that reaches 80% power
-    n_sign = df_sel.n_samples.iloc[(df_sel.power>0.8).argmax()]
-
-    ax = axs.flat[i]
-    sns.lineplot(df_sel, x='n_samples', y='power', ax=ax)
-    ax.axhline(0.8, c='gray', alpha=0.7, linestyle='--')
-    ax.axvline(n_sign, c='darkred', alpha=0.7, linestyle='--')
-    ax.text(n_sign + 1, 0.7, f'n={n_sign}', c='darkred')
-    # ax.set_xticks(list(ax.get_xticks()) + [n_sign])
-    ax.set_title(f'{interval=} ms')
-    ax.set_ylabel('power\n(% significant)')
-    ax.set_xlabel('bootstrapped sample size')
-
-fig.suptitle('Bootstrapped power analysis, resampled participants')
-savefig(fig, settings.plot_dir + '/figures/boostrapped_grouplevel.png')
 
 
 #%% participant-level: heatmap
@@ -309,8 +277,8 @@ df_seq = res['df_seq']
 # heatmap
 fig, axs = plt.subplots(2, 2, figsize=[12, 8])
 
-vmin = df_seq.sequenceness.quantile(0.01)
-vmax = df_seq.sequenceness.quantile(0.99)
+vmin = df_seq.sequenceness.quantile(0.001)
+vmax = df_seq.sequenceness.quantile(0.999)
 
 for i, interval in enumerate(sorted(df_seq.interval.unique())):
     sf_isi = sf_mean[interval][:, 0, :]
@@ -330,7 +298,7 @@ for i, interval in enumerate(sorted(df_seq.interval.unique())):
     sns.heatmap(df_heatmap, cmap='RdBu_r', center=0,  vmin=vmin, vmax=vmax, ax=ax)
     # ax.set_xticks(np.arange(0, max_lag)[::5 if interval<500 else 10], np.arange(0, max_lag*10, 10)[::5 if interval<500 else 10])
     # ax.set_yticks(np.arange(len(layout.subjects))[::2], layout.subjects[::2])
-    ax.set(ylabel='subject', xlabel='time lag', title=f'{interval=} ms')
+    ax.set(ylabel='subject', xlabel='time lag', title=f'{interval} ms')
 
 # plotting.normalize_lims(axs, which='v')
 
@@ -338,197 +306,46 @@ for i, interval in enumerate(sorted(df_seq.interval.unique())):
 fig.suptitle('Forward sequenceness across participants')
 savefig(fig, settings.plot_dir + '/figures/sequenceness_heatmap_subjects.png')
 
-#%% participant-level: p values across trials
+# mosaic heatmap: forward and backward in one row with proportional widths
+max_lags = [np.round(int(((iv/10) + 10))/3).astype(int) for iv in intervals]
+for direction, s_mean, dir_label in [('fwd', sf_mean, 'Forward'),
+                                      ('bkw', sb_mean, 'Backward')]:
+    mosaic = ''.join([f'{i}'*l for i, l in enumerate(max_lags)])
+    fig, axs = plt.subplot_mosaic(mosaic, figsize=[18, 4], dpi=80, sharey=True)
+    axs = list(axs.values())
 
-df_pval = pd.DataFrame()
+    # vmin = df_seq.sequenceness.quantile(0.05)
+    # vmax = df_seq.sequenceness.quantile(0.95)
 
-for i, (interval, sf_isi) in enumerate(sf_trials.items()):
-    pvals = []
-    for subj, sf in enumerate(sf_isi[:, :, 0, :]):
-        p, t_obs, t_perms = tdlm.signflit_test(sf, rng=subj)
-        pvals += [p]
-    df_interval = pd.DataFrame({'p-value': pvals,
-                  'subject': range(1, 31),
-                  'interval': f'{interval} ms'})
-    df_pval = pd.concat([df_pval, df_interval])
+    for i, interval in enumerate(intervals):
+        s_isi = s_mean[interval][:, 0, :]
+        ax = axs[i]
+        max_lag = s_isi.shape[-1]
+        df_heatmap = pd.DataFrame(s_isi,
+                                  columns=np.arange(0, max_lag*10, 10),
+                                  index=layout.subjects)
+        exp_lag = settings.exp_lag[interval]*10
+        df_heatmap['sort_index'] = np.mean([df_heatmap[exp_lag+j] for j in [-10, 0, 10]], axis=0)
+        df_heatmap = df_heatmap.sort_values('sort_index', ascending=False).drop('sort_index', axis=1)
 
-fig, axs = plt.subplots(1, 4, figsize=[16, 6], sharey=False)
-fig.suptitle('Significant sequenceness for individual participants\' trials')
+        sns.heatmap(df_heatmap, cmap='RdBu_r', center=0, vmin=vmin, vmax=vmax, ax=ax,
+                    cbar=False)
+        ax.set(ylabel='subject' if i==0 else '', xlabel='time lag', title=f'{interval} ms')
 
-for i, interval_label in enumerate(df_pval['interval'].unique()):
-    ax = axs[i]
-    df_iv = df_pval[df_pval['interval'] == interval_label].copy()
-    plotting.tornadoplot(df_iv, x='p-value', y='subject', center=0,
-                         low_label='p < 0', high_label='p > 0',
-                         sort=True, ax=ax)
-    ax.axvline(0.05, linestyle='--', c='darkred', linewidth=1.5, label='p=0.05')
-    pct = (df_iv['p-value'] < 0.05).mean() * 100
-    ax.set_title(f'{interval_label}\n{pct:.0f}% significant')
-    ax.set_xlabel('p-value')
-    if i == 0:
-        ax.set_ylabel('subject')
-    else:
-        ax.set_ylabel('')
+    fig.suptitle(f'{dir_label} sequenceness across participants')
+    savefig(fig, f'{settings.plot_dir}/figures/sequenceness_heatmap_subjects_{direction}_mosaic.png')
 
-sns.despine()
-fig.tight_layout()
-savefig(fig, settings.plot_dir + '/figures/sequenceness_participant_pvalues.png')
-
-#%% DEPRECATED participant level: bootstrap one example participant
-res = joblib.load(pkl_seq)
-sf_trials = res['sf_trials']
-df_seq = res['df_seq']
-
-def bootstrap_one(sf, n_samples, n_draws=10000, rng=None):
-    """Construct one participant by drawing from trials of all participants """
-    n_subj, n_trials, n_features = sf.shape
-    n_trials_all = n_subj*n_trials
-
-    all_trials = sf.reshape([-1, n_features])
-
-    rng = np.random.default_rng(rng)
-    all_idx = rng.integers(0, n_trials_all, [n_draws, n_samples])
-
-    ps = []
-    for draw in range(n_draws):
-        idx = all_idx[draw]
-        sf_sampled = all_trials[idx]
-        p, t_obs, t_perms = tdlm.signflit_test(sf_sampled, rng=rng, n_perms=1000)
-        ps += [p]
-    return ps
-
-df_power = pd.DataFrame()
-
-for i, (interval, sf_interval) in enumerate(sf_trials.items()):
-
-    sf = sf_interval[:, :, 0, 1:]
-    # signflip_test is already using all cores, so no improvements here.
-    res = Parallel(n_jobs=-1)(delayed(bootstrap_one)(sf, n, rng=n) for n in tqdm(range(2, 16*8)))
-    df_tmp = misc.to_long_df(res, ['sample_size', 'shuffle'], value_name='p',
-                            sample_size=range(2, 16*8))
-    df_tmp['power'] = df_tmp.p<0.05
-    df_tmp['interval'] = interval
-    df_power = pd.concat([df_power, df_tmp], ignore_index=True)
-
-fig, axs = plt.subplots(1, 2, figsize=[10, 4])
-ax = axs[0]
-sns.lineplot(df_power, x='sample_size', y='p', hue='interval', ax=ax)
-ax.axhline(0.05, linestyle='--', c='gray', alpha=0.5, label='p=0.05')
-ax.legend()
-ax = axs[1]
-sns.lineplot(df_power, x='sample_size', y='power', hue='interval', ax=ax)
-ax.axhline(0.05, linestyle='--', c='gray', alpha=0.5, label='p=0.05')
-ax.legend()
-fig.suptitle('Bootstrapped virtual participant by sampling from all trials')
-savefig(fig, settings.plot_dir + '/supplement/bootstrap_participant_from_all_trials.png')
-
-#%% DEPRECATED participant-level: bootstrap trials
-res = joblib.load(pkl_seq)
-sf_trials = res['sf_trials']
-df_seq = res['df_seq']
-
-def bootstrap_participants(sf, n_samples, n_draws=1000, rng=None):
-    """  Randomly draw a subset of n_trials per participant with repetition. """
-    n_subj, n_trials, n_features = sf.shape
-    rng = np.random.default_rng(rng)
-    all_idx = rng.integers(0, n_trials, (n_draws, n_subj, n_samples))
-
-    ps = []
-    for draw in range(n_draws):
-        px = []
-        for subj in range(n_subj):
-            idx = all_idx[draw, subj]
-            sf_sampled = sf[subj, idx]
-            p, t_obs, t_perms = tdlm.signflit_test(sf_sampled, rng=rng, n_perms=1000)
-            px += [p]
-        ps += [px]
-    return ps
-
-df_power = pd.DataFrame()
-
-for i, (interval, sf_interval) in enumerate(sf_trials.items()):
-
-    sf = sf_interval[:, :, 0, 1:]
-    # signflip_test is already using all cores, so no improvements here.
-    res = Parallel(n_jobs=-1)(delayed(bootstrap_participants)(sf, n, rng=n) for n in tqdm(range(2, 65)))
-    power = (np.array(res)<0.05).mean(1)
-    df_tmp = misc.to_long_df(power, [ 'n_samples', 'subject',],
-                             n_samples= range(2, 65),
-                             value_name='power')
-    df_tmp['interval'] = interval
-    df_power = pd.concat([df_power, df_tmp], ignore_index=True)
+    # separate colorbar figure
+fig_cb, ax_cb = plt.subplots(figsize=[0.1, 8])
+fig_cb.colorbar(axs[-1].collections[0], cax=ax_cb)
+savefig(fig_cb, f'{settings.plot_dir}/figures/sequenceness_heatmap_subjects_cbar.png')
 
 
-csv_file = bids_base.copy().update(processing='participants', suffix='power', extension='csv.gz')
-csv_file.mkdir()
-df_power.to_csv(csv_file)
-df_power = pd.read_csv(csv_file)
-
-fig, axs = plt.subplots(1, 4, figsize=[12, 3], sharey=True, sharex=True)
-
-for i, interval in enumerate(sf_trials):
-    df_sel = df_power[df_power.interval==interval]
-    # sample size that reaches 80% power
-    ax = axs[i]
-    ax.clear()
-    # sns.scatterplot(df_sel, x='n_samples', y='power', hue='subject', ax=ax)
-    sns.lineplot(df_sel, x='n_samples', y='power', hue='subject', ax=ax)
-
-plotting.normalize_lims(axs)
-sns.despine()
-fig.suptitle('Bootstrapped power analysis, resampled trials')
-savefig(fig, settings.plot_dir + '/figures/boostrapped_participantlevel.png')
 
 
-#%% trial-level: heatmap
-np.random.seed(0)
-subjects_rnd = sorted(np.random.choice(layout.subjects, 6, replace=False))
 
-fig, axs = plt.subplots(2, 3, figsize=[10, 6])
 
-for i, subject in enumerate(tqdm(subjects_rnd)):
-    subject = str(subject)
-    # load classifier that we previously computed
-    clf = bids_utils.load_latest_classifier(subject)
-    data_x, data_y, beh = bids_utils.load_fast_sequences(subject, intervals=[32])
-
-    probas = clf.predict_proba(data_x.transpose(0, 2, 1).reshape([-1, data_x.shape[1]])).reshape([data_x.shape[0], data_x.shape[-1], -1])
-
-    tf_trials = [seq2tf(''.join(num2char(df_trial.trigger.values))) for df_trial in beh]
-
-    sf_subj = []
-    sb_subj = []
-
-    for proba, df_trial in zip(tqdm(probas), beh, strict=True):
-        proba = eval(normalization)(proba)
-
-        # transition matrix for this specific trial
-        seq_trial = num2char(df_trial.trigger.values)
-        tf = seq2tf(''.join(seq_trial))
-        interval = df_trial.interval_time.values[0]
-
-        # only calculate up to the length that they have actually been shown!
-        # else we are analysing the buffer period already +200ms for safety
-        length = int((interval+100)*5)//10 + 20  # assuming 100 Hz sfreq
-        max_lag = int(((interval/10) + 10)*1.5)
-
-        sf_trial, sb_trial = tdlm.compute_1step(proba[:length, :], tf, n_shuf=0, max_lag=max_lag)
-        sf_subj += [zscore(sf_trial, axis=-1, nan_policy='omit').squeeze()]
-        sb_subj += [zscore(sb_trial, axis=-1, nan_policy='omit').squeeze()]
-
-    sf_subj = np.array(sf_subj)
-    sb_subj = np.array(sb_subj)
-
-    df = pd.DataFrame(sf_subj, columns=np.arange(0, max_lag*10+10, 10))
-    ax = axs.flat[i]
-    sns.heatmap(df, cmap='RdBu_r', ax=ax)
-    ax.set(xlabel='time lag', ylabel='trial', title=f'{subject=}')
-
-plotting.normalize_lims(axs, 'v')
-fig.suptitle('Forward sequenceness across participants for 32 ms condition')
-savefig(fig, settings.plot_dir + '/figures/sequenceness_trial_level.png')
-
-#%% trial-level: individual trial expected lag sequenceness
+#%% trial-subj overview: the complete plot
 
 res = joblib.load(pkl_seq)
 sf_trials = res['sf_trials']
@@ -577,16 +394,27 @@ for i, (interval, sf) in enumerate(sf_trials.items()):
         ax.scatter(j, mean_val, marker='D', s=40, color='black', zorder=5)
     ax.set_xticklabels(ax.get_xticklabels(), rotation=90)
     ax.axhline(0, linestyle='--', c='black')
-    ax.set(title=f'interval {interval} ms\n', ylabel='trial sequenceness at expected lag (expected_lag*10) ms +-10ms')
+    ax.set(title=f'interval {interval} ms\n', ylabel='mean sequenceness around expected lag')
 
-    # annotate significant participants with a star above their column
+    # annotate significant participants with a star below their column
     y_bottom, y_top = ax.get_ylim()
-    y_star = y_top * 0.95
+    y_star = y_bottom + (y_top - y_bottom) * 0.02
     for j, p in enumerate(pvals_sorted):
         if p < 0.05:
             ax.text(j, y_star, '*', ha='center', va='bottom', fontsize=14,
                    fontweight='bold', color='black')
-    ax.set_ylim(y_bottom, y_top*1.1)
+
+    # blue band at top showing decoding accuracy per participant
+    dec_accs = [bids_utils.get_decoding_accuracy_MEG(s) for s in subjects_sorted]
+    dec_accs = np.array(dec_accs)
+    acc_norm = plt.Normalize(vmin=dec_accs.min(), vmax=dec_accs.max())
+    acc_cmap = plt.cm.Blues
+    y_bottom, y_top = ax.get_ylim()
+    band_h = (y_top - y_bottom) * 0.03
+    for j, acc in enumerate(dec_accs):
+        ax.add_patch(plt.Rectangle((j - 0.5, y_top - band_h), 1, band_h,
+                                   color=acc_cmap(acc_norm(acc)), clip_on=False))
+    ax.set_ylim(y_bottom, y_top)
 
 
 import matplotlib.lines as mlines
@@ -594,12 +422,23 @@ import matplotlib.patches as mpatches
 legend_handles = [
     mlines.Line2D([], [], marker='o', color='gray', alpha=0.5, linestyle='None', markersize=6, label='individual trials'),
     mlines.Line2D([], [], marker='D', color='black', linestyle='None', markersize=6, label='mean'),
+    mpatches.Patch(facecolor=plt.cm.Blues(0.6), label='decoding accuracy'),
 ]
-fig.legend(handles=legend_handles, loc='center right', ncol=1, bbox_to_anchor=(1.0, 0.5),
+fig.legend(handles=legend_handles, loc='center right', ncol=1, bbox_to_anchor=(1.0, 0.49),
            frameon=True)
-fig.tight_layout(rect=[0, 0, 0.92, 1])
+fig.tight_layout(rect=[0, 0, 0.90, 1])
 
-savefig(fig, settings.plot_dir + '/figures/sequenceness_trial_level.png')
+# colorbar for mean sequenceness (next to upper row)
+cbar_ax1 = fig.add_axes([0.91, 0.55, 0.015, 0.35])
+sm1 = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+fig.colorbar(sm1, cax=cbar_ax1, label='mean sequenceness')
+
+# colorbar for decoding accuracy (next to lower row)
+cbar_ax2 = fig.add_axes([0.91, 0.08, 0.015, 0.35])
+sm2 = plt.cm.ScalarMappable(cmap=acc_cmap, norm=acc_norm)
+fig.colorbar(sm2, cax=cbar_ax2, label='decoding accuracy')
+
+savefig(fig, settings.plot_dir + '/figures/sequenceness_trial_level.png', tight=False)
 
 
 #%% trial-level: correlate with behaviour and decoding accuracy
@@ -958,3 +797,247 @@ for i, interval in enumerate(sf_trials):
 sns.despine()
 fig.suptitle('Sequenceness vs reaction time (correct trials only)')
 savefig(fig, settings.plot_dir + '/figures/sequenceness_vs_rt.png')
+
+#%% DEPRECATED group-level: bootstrap participants
+
+def bootstrap_group(sf, n_samples, n_draws=1000, rng=None):
+    n_subj = len(sf)
+    rng = np.random.default_rng(rng)
+    all_idx = rng.integers(0, n_subj, (n_draws, n_samples))
+
+    ps = []
+    ts = []
+    for i in range(n_draws):
+        idx = all_idx[i]
+        sf_sampled = sf[idx]
+        p, t_obs, t_perms = tdlm.signflit_test(sf_sampled, rng=rng, n_perms=1000)
+        ps += [p]
+        ts += [t_obs]
+    return ps, ts
+
+df_power = pd.DataFrame()
+for i, interval in enumerate(tqdm(intervals, desc='bootstrapping')):
+    sf = sf_mean[interval][:, 0, :]
+
+    # signflip_test is already using all cores, so no improvements here.
+    res = Parallel(n_jobs=-1)(delayed(bootstrap_group)(sf, n, rng=n) for n in range(2, 60))
+    power = [(np.array(p)<0.05).mean() for p, _ in res]
+
+    df_tmp = pd.DataFrame({'power': power,
+                           'interval': interval,
+                           'n_samples': range(2, 60)})
+    df_power = pd.concat([df_power, df_tmp], ignore_index=True)
+
+csv_file = bids_base.copy().update(processing='group', suffix='power', extension='csv.gz')
+csv_file.mkdir()
+df_power.to_csv(csv_file)
+
+df_power = pd.read_csv(csv_file)
+
+fig, axs = plt.subplots(1, 4, figsize=[12, 3], sharey=True, sharex=True)
+for i, interval in enumerate(intervals):
+    df_sel = df_power[df_power.interval==interval]
+    # sample size that reaches 80% power
+    n_sign = df_sel.n_samples.iloc[(df_sel.power>0.8).argmax()]
+
+    ax = axs.flat[i]
+    sns.lineplot(df_sel, x='n_samples', y='power', ax=ax)
+    ax.axhline(0.8, c='gray', alpha=0.7, linestyle='--')
+    ax.axvline(n_sign, c='darkred', alpha=0.7, linestyle='--')
+    ax.text(n_sign + 1, 0.7, f'n={n_sign}', c='darkred')
+    # ax.set_xticks(list(ax.get_xticks()) + [n_sign])
+    ax.set_title(f'{interval=} ms')
+    ax.set_ylabel('power\n(% significant)')
+    ax.set_xlabel('bootstrapped sample size')
+
+fig.suptitle('Bootstrapped power analysis, resampled participants')
+savefig(fig, settings.plot_dir + '/figures/boostrapped_grouplevel.png')
+
+#%% DEPRECATED participant level: bootstrap one example participant
+res = joblib.load(pkl_seq)
+sf_trials = res['sf_trials']
+df_seq = res['df_seq']
+
+def bootstrap_one(sf, n_samples, n_draws=10000, rng=None):
+    """Construct one participant by drawing from trials of all participants """
+    n_subj, n_trials, n_features = sf.shape
+    n_trials_all = n_subj*n_trials
+
+    all_trials = sf.reshape([-1, n_features])
+
+    rng = np.random.default_rng(rng)
+    all_idx = rng.integers(0, n_trials_all, [n_draws, n_samples])
+
+    ps = []
+    for draw in range(n_draws):
+        idx = all_idx[draw]
+        sf_sampled = all_trials[idx]
+        p, t_obs, t_perms = tdlm.signflit_test(sf_sampled, rng=rng, n_perms=1000)
+        ps += [p]
+    return ps
+
+df_power = pd.DataFrame()
+
+for i, (interval, sf_interval) in enumerate(sf_trials.items()):
+
+    sf = sf_interval[:, :, 0, 1:]
+    # signflip_test is already using all cores, so no improvements here.
+    res = Parallel(n_jobs=-1)(delayed(bootstrap_one)(sf, n, rng=n) for n in tqdm(range(2, 16*8)))
+    df_tmp = misc.to_long_df(res, ['sample_size', 'shuffle'], value_name='p',
+                            sample_size=range(2, 16*8))
+    df_tmp['power'] = df_tmp.p<0.05
+    df_tmp['interval'] = interval
+    df_power = pd.concat([df_power, df_tmp], ignore_index=True)
+
+fig, axs = plt.subplots(1, 2, figsize=[10, 4])
+ax = axs[0]
+sns.lineplot(df_power, x='sample_size', y='p', hue='interval', ax=ax)
+ax.axhline(0.05, linestyle='--', c='gray', alpha=0.5, label='p=0.05')
+ax.legend()
+ax = axs[1]
+sns.lineplot(df_power, x='sample_size', y='power', hue='interval', ax=ax)
+ax.axhline(0.05, linestyle='--', c='gray', alpha=0.5, label='p=0.05')
+ax.legend()
+fig.suptitle('Bootstrapped virtual participant by sampling from all trials')
+savefig(fig, settings.plot_dir + '/supplement/bootstrap_participant_from_all_trials.png')
+
+#%% DEPRECATED participant-level: bootstrap trials
+res = joblib.load(pkl_seq)
+sf_trials = res['sf_trials']
+df_seq = res['df_seq']
+
+def bootstrap_participants(sf, n_samples, n_draws=1000, rng=None):
+    """  Randomly draw a subset of n_trials per participant with repetition. """
+    n_subj, n_trials, n_features = sf.shape
+    rng = np.random.default_rng(rng)
+    all_idx = rng.integers(0, n_trials, (n_draws, n_subj, n_samples))
+
+    ps = []
+    for draw in range(n_draws):
+        px = []
+        for subj in range(n_subj):
+            idx = all_idx[draw, subj]
+            sf_sampled = sf[subj, idx]
+            p, t_obs, t_perms = tdlm.signflit_test(sf_sampled, rng=rng, n_perms=1000)
+            px += [p]
+        ps += [px]
+    return ps
+
+df_power = pd.DataFrame()
+
+for i, (interval, sf_interval) in enumerate(sf_trials.items()):
+
+    sf = sf_interval[:, :, 0, 1:]
+    # signflip_test is already using all cores, so no improvements here.
+    res = Parallel(n_jobs=-1)(delayed(bootstrap_participants)(sf, n, rng=n) for n in tqdm(range(2, 65)))
+    power = (np.array(res)<0.05).mean(1)
+    df_tmp = misc.to_long_df(power, [ 'n_samples', 'subject',],
+                             n_samples= range(2, 65),
+                             value_name='power')
+    df_tmp['interval'] = interval
+    df_power = pd.concat([df_power, df_tmp], ignore_index=True)
+
+
+csv_file = bids_base.copy().update(processing='participants', suffix='power', extension='csv.gz')
+csv_file.mkdir()
+df_power.to_csv(csv_file)
+df_power = pd.read_csv(csv_file)
+
+fig, axs = plt.subplots(1, 4, figsize=[12, 3], sharey=True, sharex=True)
+
+for i, interval in enumerate(sf_trials):
+    df_sel = df_power[df_power.interval==interval]
+    # sample size that reaches 80% power
+    ax = axs[i]
+    ax.clear()
+    # sns.scatterplot(df_sel, x='n_samples', y='power', hue='subject', ax=ax)
+    sns.lineplot(df_sel, x='n_samples', y='power', hue='subject', ax=ax)
+
+plotting.normalize_lims(axs)
+sns.despine()
+fig.suptitle('Bootstrapped power analysis, resampled trials')
+savefig(fig, settings.plot_dir + '/figures/boostrapped_participantlevel.png')
+
+#%% DEPRECATED participant-level: p values across trials
+
+df_pval = pd.DataFrame()
+
+for i, (interval, sf_isi) in enumerate(sf_trials.items()):
+    pvals = []
+    for subj, sf in enumerate(sf_isi[:, :, 0, :]):
+        p, t_obs, t_perms = tdlm.signflit_test(sf, rng=subj)
+        pvals += [p]
+    df_interval = pd.DataFrame({'p-value': pvals,
+                  'subject': range(1, 31),
+                  'interval': f'{interval} ms'})
+    df_pval = pd.concat([df_pval, df_interval])
+
+fig, axs = plt.subplots(1, 4, figsize=[16, 6], sharey=False)
+fig.suptitle('Significant sequenceness for individual participants\' trials')
+
+for i, interval_label in enumerate(df_pval['interval'].unique()):
+    ax = axs[i]
+    df_iv = df_pval[df_pval['interval'] == interval_label].copy()
+    plotting.tornadoplot(df_iv, x='p-value', y='subject', center=0,
+                         low_label='p < 0', high_label='p > 0',
+                         sort=True, ax=ax)
+    ax.axvline(0.05, linestyle='--', c='darkred', linewidth=1.5, label='p=0.05')
+    pct = (df_iv['p-value'] < 0.05).mean() * 100
+    ax.set_title(f'{interval_label}\n{pct:.0f}% significant')
+    ax.set_xlabel('p-value')
+    if i == 0:
+        ax.set_ylabel('subject')
+    else:
+        ax.set_ylabel('')
+
+sns.despine()
+fig.tight_layout()
+savefig(fig, settings.plot_dir + '/figures/sequenceness_participant_pvalues.png')
+
+#%% DEPRECATED trial-level: heatmap
+np.random.seed(0)
+subjects_rnd = sorted(np.random.choice(layout.subjects, 6, replace=False))
+
+fig, axs = plt.subplots(2, 3, figsize=[10, 6])
+
+for i, subject in enumerate(tqdm(subjects_rnd)):
+    subject = str(subject)
+    # load classifier that we previously computed
+    clf = bids_utils.load_latest_classifier(subject)
+    data_x, data_y, beh = bids_utils.load_fast_sequences(subject, intervals=[32])
+
+    probas = clf.predict_proba(data_x.transpose(0, 2, 1).reshape([-1, data_x.shape[1]])).reshape([data_x.shape[0], data_x.shape[-1], -1])
+
+    tf_trials = [seq2tf(''.join(num2char(df_trial.trigger.values))) for df_trial in beh]
+
+    sf_subj = []
+    sb_subj = []
+
+    for proba, df_trial in zip(tqdm(probas), beh, strict=True):
+        proba = eval(normalization)(proba)
+
+        # transition matrix for this specific trial
+        seq_trial = num2char(df_trial.trigger.values)
+        tf = seq2tf(''.join(seq_trial))
+        interval = df_trial.interval_time.values[0]
+
+        # only calculate up to the length that they have actually been shown!
+        # else we are analysing the buffer period already +200ms for safety
+        length = int((interval+100)*5)//10 + 20  # assuming 100 Hz sfreq
+        max_lag = int(((interval/10) + 10)*1.5)
+
+        sf_trial, sb_trial = tdlm.compute_1step(proba[:length, :], tf, n_shuf=0, max_lag=max_lag)
+        sf_subj += [zscore(sf_trial, axis=-1, nan_policy='omit').squeeze()]
+        sb_subj += [zscore(sb_trial, axis=-1, nan_policy='omit').squeeze()]
+
+    sf_subj = np.array(sf_subj)
+    sb_subj = np.array(sb_subj)
+
+    df = pd.DataFrame(sf_subj, columns=np.arange(0, max_lag*10+10, 10))
+    ax = axs.flat[i]
+    sns.heatmap(df, cmap='RdBu_r', ax=ax)
+    ax.set(xlabel='time lag', ylabel='trial', title=f'{subject=}')
+
+plotting.normalize_lims(axs, 'v')
+fig.suptitle('Forward sequenceness across participants for 32 ms condition')
+savefig(fig, settings.plot_dir + '/figures/sequenceness_trial_level.png')

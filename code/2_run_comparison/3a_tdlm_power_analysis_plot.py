@@ -53,9 +53,10 @@ def _load_pkl_method(processing):
                                         extension='.pkl.gz')
     pattern = str(template.fpath).replace('task-NSAMPLES', 'task-*')
     files = sorted(glob(pattern))
-    if not files:
-        return None
-    return pd.concat([joblib.load(f) for f in files], ignore_index=True)
+    assert files, f'{processing} : {pattern} not found'
+    df = pd.concat([joblib.load(f) for f in files], ignore_index=True)
+    df['method'] = processing
+    return df
 
 
 def _load_ttest():
@@ -64,7 +65,9 @@ def _load_ttest():
                                        extension='.pkl.gz')
     if not pkl_out.fpath.is_file():
         return None
-    return joblib.load(pkl_out.fpath)
+    df = joblib.load(pkl_out.fpath)
+    df['method'] = 't-test'
+    return df
 
 
 # ── shared plot helpers ───────────────────────────────────────────────────────
@@ -75,12 +78,6 @@ def _contour_ax(ax, Z, X, Y, i=0):
     for lvl, col, lw in zip(power_levels, contour_colors, contour_widths):
         ax.contour(X, Y, Z, levels=[lvl], colors=[col], linewidths=lw)
     ax.set_xticks(np.arange(0, int(X.max()) + 10, 10))
-    legend_handles = [Line2D([], [], color=col, linewidth=lw,
-                             label=f'{int(lvl*100)}%')
-                      for lvl, col, lw in zip(power_levels, contour_colors,
-                                              contour_widths)]
-    ax.legend(handles=legend_handles, title='power', loc='upper right',
-              frameon=True)
     ax.set(xlabel='bootstrapped sample size',
            ylabel='bootstrapped trials per participant' if i == 0 else '')
     return cf
@@ -91,7 +88,14 @@ def _add_colorbar(fig, cf, axs):
     fig.tight_layout(rect=[0, 0, 0.92, 1])
     plt.pause(0.1)
     fig.subplots_adjust(right=0.92)
-    cax = fig.add_axes([0.93, 0.175, 0.015, 0.6])
+    # figure-level legend above colorbar
+    legend_handles = [Line2D([], [], color=col, linewidth=lw,
+                             label=f'{int(lvl*100)}%')
+                      for lvl, col, lw in zip(power_levels, contour_colors,
+                                              contour_widths)]
+    fig.legend(handles=legend_handles, title='power',
+               loc='upper right', bbox_to_anchor=(0.99, 0.97), frameon=True)
+    cax = fig.add_axes([0.93, 0.08, 0.015, 0.5])
     fig.colorbar(cf, cax=cax, label='power')
 
 
@@ -99,21 +103,29 @@ def _add_colorbar(fig, cf, axs):
 
 def plot_per_interval(df_power, method_name, savepath):
     """1×4 contour plot, one panel per speed condition."""
-    fig, axs = plt.subplots(1, len(intervals), figsize=[4 * len(intervals), 4])
+    fig, axs = plt.subplots(1, len(intervals), figsize=[4 * len(intervals), 4.3])
     cf = None
     for i, interval in enumerate(intervals):
         ax = axs[i]
         df_sel = df_power[df_power.interval == interval]
         if len(df_sel) == 0:
-            ax.set_title(f'{interval=} ms\n(no data)')
+            ax.set_title(f'{interval} ms\n(no data)')
             continue
         df_pivot = df_sel.pivot_table(index='n_trials', columns='n_samples',
                                       values='power', aggfunc='mean')
         X, Y = np.meshgrid(df_pivot.columns.values, df_pivot.index.values)
         Z = df_pivot.values
         cf = _contour_ax(ax, Z, X, Y, i)
-        ax.set_title(f'{interval=} ms')
-    fig.suptitle(f'Power contour: bootstrapped participants × trials ({method_name})')
+        ax.set_title(f'{interval} ms')
+        ax.set_ylim([2, 60])
+        ax.set_xlim([2, 80])
+
+    fig.suptitle(f'TDLM power contour ({method_name})')
+    axs[0].annotate('forward sequenceness',
+                     xy=(0, 0.5), xycoords='axes fraction',
+                     xytext=(-60, 0), textcoords='offset points',
+                     va='center', ha='center', rotation=90,
+                     fontsize=16, fontweight='bold')
     if cf is not None:
         _add_colorbar(fig, cf, axs)
     savefig(fig, savepath, tight=False)
@@ -156,7 +168,7 @@ def plot_comparison(datasets):
     fig.suptitle('Power contour: mean across speed conditions')
     if cf is not None:
         _add_colorbar(fig, cf, axs)
-    savepath = settings.plot_dir + '/figures/power_contour_methods_comparison.png'
+    savepath = settings.plot_dir + '/figures/tdlm_power_contour_methods_comparison.png'
     savefig(fig, savepath, tight=False)
     print(f'Saved {savepath}')
 
@@ -186,7 +198,7 @@ def plot_80_curve(datasets):
            ylabel='bootstrapped trials per participant',
            title='80% power curve (mean across speed conditions)')
     fig.tight_layout()
-    savepath = settings.plot_dir + '/figures/power_80_curve_comparison.png'
+    savepath = settings.plot_dir + '/figures/tdlm_power_80_curve_comparison.png'
     savefig(fig, savepath)
     print(f'Saved {savepath}')
 
@@ -205,6 +217,9 @@ fnames = {
     'cluster':            ('power_contour_cluster',        'power_contour_cluster_mean'),
 }
 
+df_all = pd.concat([dfx[1] for dfx in all_methods])
+plot_per_interval(df_all, 'mean', settings.plot_dir + f'/figures/tdlm_power_contours_mean.png')
+asd
 available = []
 for method_name, df in all_methods:
     if df is None:
@@ -212,12 +227,11 @@ for method_name, df in all_methods:
         continue
     available.append((method_name, df))
     stem_iv, stem_mean = fnames[method_name]
-    plot_per_interval(df, method_name,
-                      settings.plot_dir + f'/figures/{stem_iv}.png')
-    plot_mean(df, method_name,
-              settings.plot_dir + f'/figures/{stem_mean}.png')
+    plot_per_interval(df, method_name, settings.plot_dir + f'/figures/tdlm_{stem_iv}.png')
+    plot_mean(df, method_name, settings.plot_dir + f'/figures/tdlm_{stem_mean}.png')
 
-assert len(available) > 0, 'No results found for any method'
+
+assert len(available) == 3, 'No results found for any method'
 plot_comparison(available)
 plot_80_curve(available)
 print('Done')
