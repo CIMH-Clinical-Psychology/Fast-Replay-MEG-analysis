@@ -40,6 +40,8 @@ plt.rc('xtick', labelsize=11)    # x tick labels
 plt.rc('ytick', labelsize=11)    # y tick labels
 plt.rc('legend', fontsize=11)    # legend
 
+sns.set_context('paper', font_scale=1.5)
+
 subjects_fmri = [f'{i:02d}' for i in range(1, 41)]
 subjects_meg = [f'{i:02d}' for i in range(1, 31)]
 
@@ -124,7 +126,7 @@ for subject in tqdm(subjects_fmri, desc='Loading fMRI data'):
 #%% Accuracy - MEG/fMRI combined
 # Use pre-loaded df_fmri_acc and df_meg_acc
 
-fig, axs = plt.subplots(1, 2, figsize=[14, 5])
+fig, axs = plt.subplots(2, 1, figsize=[6, 8])
 
 # MEG plot (ms-based timepoints)
 ax = axs[0]
@@ -132,24 +134,29 @@ df_meg_acc['time'] = df_meg_acc['timepoint']/1000  # convert to seconds
 sns.lineplot(df_meg_acc, x='time', y='accuracy', ax=ax)
 ax.axhline(0.2, color='black', alpha=0.5, linestyle='--')
 ax.set(xlabel='seconds after stim onset', ylabel='accuracy',
-       title=f'MEG\ndecoding accuracy (n={len(subjects_meg)})')
-ax.axvline(0, color='k', label='image onset', linestyle='--')
-ax.legend(['decoding acc.', 'SE', 'chance level', 'image onset'], fontsize=10, loc='upper right')
+       title=f'Localizer decoding accuracy (MEG)')
+ax.axvline(0, color='r', label='image onset', linewidth=5, alpha=0.2)
+ax.set_xticks(np.arange(-2, 9)/10, minor=True)
+ax.set_yticks(np.arange(0, 9)/10, minor=True)
+ax.legend(['decoding acc.', f'SE (n={len(subjects_meg)})', 'chance level', 'image onset'], fontsize=11, loc='upper right')
 
+#
 # fMRI plot (TR-based, seconds)
 ax = axs[1]
 sns.lineplot(df_fmri_acc, x='tr_onset', y='accuracy', ax=ax)
 ax.hlines(0.2, -0.6, 8, color='black', alpha=0.5, linestyle='--')
 ax.set(xlim=[-0.6, 8], xlabel='seconds after stim onset', ylabel='accuracy',
-       title=f'fMRI\nlocalizer decoding accuracy (n={len(subjects_fmri)})')
-ax.axvline(0, color='k', label='image onset', linestyle='--')
-ax.legend(['decoding acc.', 'SE', 'chance level', 'image onset'], fontsize=10, loc='upper right')
+       title=f'Localizer decoding accuracy (fMRI)')
+# ax.axvline(0, color='k', label='image onset', linestyle='--')
+ax.axvline(0, color='r', label='image onset', linewidth=5, alpha=0.2)
+ax.set_xticks(np.arange(0, 9))
+ax.set_yticks(np.arange(0, 9)/10, minor=True)
+ax.legend([f'decoding acc.', f'SE (n={len(subjects_fmri)})', 'chance level', 'image onset'], fontsize=11,loc='upper right')
 
 plotting.normalize_lims(axs, which='y')
 
 sns.despine()
 plotting.savefig(fig, settings.plot_dir + f'/figures/localizer_accuracy.png')
-
 
 #%% FIGURE: slow trial class probability (fMRI)
 df_proba = df_fmri_proba  # use loaded fMRI data
@@ -174,7 +181,7 @@ ax.set(title='mean', ylabel='probability', xlabel='seconds after stim onset', xl
 plotting.normalize_lims(list(axs.flat))
 plotting.savefig(fig, settings.plot_dir + f'/figures/localizer_3T_probabilities.png')
 
-
+asd
 #%% fast trials: probability (fMRI)
 df = pd.DataFrame()
 for subject in tqdm(subjects_fmri):

@@ -28,6 +28,7 @@ from mne_bids import BIDSPath
 from glob import glob
 
 intervals = [32, 64, 128, 512]
+sns.set_context('paper', font_scale=1.5)
 
 bids_base = BIDSPath(
     root=settings.bids_dir_meg + '/derivatives',
@@ -79,7 +80,7 @@ def _contour_ax(ax, Z, X, Y, i=0):
         ax.contour(X, Y, Z, levels=[lvl], colors=[col], linewidths=lw)
     ax.set_xticks(np.arange(0, int(X.max()) + 10, 10))
     ax.set(xlabel='bootstrapped sample size',
-           ylabel='bootstrapped trials per participant' if i == 0 else '')
+           ylabel='trials per participant' if i == 0 else '')
     return cf
 
 
@@ -103,48 +104,48 @@ def _add_colorbar(fig, cf, axs):
 
 def plot_per_interval(df_power, method_name, savepath):
     """1×4 contour plot, one panel per speed condition."""
-    fig, axs = plt.subplots(1, len(intervals), figsize=[4 * len(intervals), 4.3])
+    fig, axs = plt.subplots(1, len(intervals), figsize=[4 * len(intervals), 3.75])
     cf = None
     for i, interval in enumerate(intervals):
         ax = axs[i]
         df_sel = df_power[df_power.interval == interval]
         if len(df_sel) == 0:
-            ax.set_title(f'{interval} ms\n(no data)')
+            ax.set_title(f'{settings.format_interval(interval)} ms\n(no data)')
             continue
         df_pivot = df_sel.pivot_table(index='n_trials', columns='n_samples',
                                       values='power', aggfunc='mean')
         X, Y = np.meshgrid(df_pivot.columns.values, df_pivot.index.values)
         Z = df_pivot.values
         cf = _contour_ax(ax, Z, X, Y, i)
-        ax.set_title(f'{interval} ms')
+        ax.set_title(f'{settings.format_interval(interval)} ms')
         ax.set_ylim([2, 60])
         ax.set_xlim([2, 80])
 
-    fig.suptitle(f'TDLM power contour ({method_name})')
+    # fig.suptitle(f'TDLM power contour ({method_name})')
     axs[0].annotate('forward sequenceness',
                      xy=(0, 0.5), xycoords='axes fraction',
                      xytext=(-60, 0), textcoords='offset points',
                      va='center', ha='center', rotation=90,
-                     fontsize=16, fontweight='bold')
+                     fontsize=16)
     if cf is not None:
         _add_colorbar(fig, cf, axs)
     savefig(fig, savepath, tight=False)
     print(f'Saved {savepath}')
 
 
-def plot_mean(df_power, method_name, savepath):
-    """1×1 contour plot, mean power across all speed conditions."""
-    df_mean = df_power.groupby(['n_trials', 'n_samples'])['power'].mean().reset_index()
-    df_pivot = df_mean.pivot_table(index='n_trials', columns='n_samples', values='power')
-    X, Y = np.meshgrid(df_pivot.columns.values, df_pivot.index.values)
-    Z = df_pivot.values
+# def plot_mean(df_power, method_name, savepath):
+#     """1×1 contour plot, mean power across all speed conditions."""
+#     df_mean = df_power.groupby(['n_trials', 'n_samples'])['power'].mean().reset_index()
+#     df_pivot = df_mean.pivot_table(index='n_trials', columns='n_samples', values='power')
+#     X, Y = np.meshgrid(df_pivot.columns.values, df_pivot.index.values)
+#     Z = df_pivot.values
 
-    fig, ax = plt.subplots(1, 1, figsize=[8, 6])
-    cf = _contour_ax(ax, Z, X, Y, i=0)
-    fig.suptitle(f'Power contour: mean across speed conditions ({method_name})')
-    fig.colorbar(cf, ax=ax, label='power')
-    savefig(fig, savepath, tight=False)
-    print(f'Saved {savepath}')
+#     fig, ax = plt.subplots(1, 1, figsize=[8, 6])
+#     cf = _contour_ax(ax, Z, X, Y, i=0)
+#     fig.suptitle(f'Power contour: mean across speed conditions ({method_name})')
+#     fig.colorbar(cf, ax=ax, label='power')
+#     savefig(fig, savepath, tight=False)
+#     print(f'Saved {savepath}')
 
 
 # ── comparison plot ───────────────────────────────────────────────────────────
@@ -175,35 +176,35 @@ def plot_comparison(datasets):
 
 # ── 80% power curve comparison ────────────────────────────────────────────────
 
-def plot_80_curve(datasets):
-    """Plot the 80% power contour line for each method on the same axes.
+# def plot_80_curve(datasets):
+#     """Plot the 80% power contour line for each method on the same axes.
 
-    For each method, the mean power across speed conditions is computed,
-    then the 80% iso-power line is drawn.
-    """
-    fig, ax = plt.subplots(1, 1, figsize=[8, 6])
-    colors = sns.color_palette()
+#     For each method, the mean power across speed conditions is computed,
+#     then the 80% iso-power line is drawn.
+#     """
+#     fig, ax = plt.subplots(1, 1, figsize=[8, 6])
+#     colors = sns.color_palette()
 
-    for i, (method_name, df_power) in enumerate(datasets):
-        df_mean = df_power.groupby(['n_trials', 'n_samples'])['power'].mean().reset_index()
-        df_pivot = df_mean.pivot_table(index='n_trials', columns='n_samples',
-                                        values='power')
-        X, Y = np.meshgrid(df_pivot.columns.values, df_pivot.index.values)
-        Z = df_pivot.values
-        cs = ax.contour(X, Y, Z, levels=[0.8], colors=[colors[i]], linewidths=2)
-        cs.collections[0].set_label(method_name)
+#     for i, (method_name, df_power) in enumerate(datasets):
+#         df_mean = df_power.groupby(['n_trials', 'n_samples'])['power'].mean().reset_index()
+#         df_pivot = df_mean.pivot_table(index='n_trials', columns='n_samples',
+#                                         values='power')
+#         X, Y = np.meshgrid(df_pivot.columns.values, df_pivot.index.values)
+#         Z = df_pivot.values
+#         cs = ax.contour(X, Y, Z, levels=[0.8], colors=[colors[i]], linewidths=2)
+#         cs.collections[0].set_label(method_name)
 
-    ax.legend(frameon=True)
-    ax.set(xlabel='bootstrapped sample size',
-           ylabel='bootstrapped trials per participant',
-           title='80% power curve (mean across speed conditions)')
-    fig.tight_layout()
-    savepath = settings.plot_dir + '/figures/tdlm_power_80_curve_comparison.png'
-    savefig(fig, savepath)
-    print(f'Saved {savepath}')
+#     ax.legend(frameon=True)
+#     ax.set(xlabel='bootstrapped sample size',
+#            ylabel='bootstrapped trials per participant',
+#            title='80% power curve (mean across speed conditions)')
+#     fig.tight_layout()
+#     savepath = settings.plot_dir + '/figures/tdlm_power_80_curve_comparison.png'
+#     savefig(fig, savepath)
+#     print(f'Saved {savepath}')
 
 
-# ── main ──────────────────────────────────────────────────────────────────────
+#%% ── main ──────────────────────────────────────────────────────────────────────
 
 all_methods = [
     ('permutation t-test', _load_pkl_method('signflip')),
@@ -219,7 +220,7 @@ fnames = {
 
 df_all = pd.concat([dfx[1] for dfx in all_methods])
 plot_per_interval(df_all, 'mean', settings.plot_dir + f'/figures/tdlm_power_contours_mean.png')
-asd
+
 available = []
 for method_name, df in all_methods:
     if df is None:
@@ -228,10 +229,10 @@ for method_name, df in all_methods:
     available.append((method_name, df))
     stem_iv, stem_mean = fnames[method_name]
     plot_per_interval(df, method_name, settings.plot_dir + f'/figures/tdlm_{stem_iv}.png')
-    plot_mean(df, method_name, settings.plot_dir + f'/figures/tdlm_{stem_mean}.png')
+    # plot_mean(df, method_name, settings.plot_dir + f'/figures/tdlm_{stem_mean}.png')
 
 
 assert len(available) == 3, 'No results found for any method'
 plot_comparison(available)
-plot_80_curve(available)
+# plot_80_curve(available)
 print('Done')

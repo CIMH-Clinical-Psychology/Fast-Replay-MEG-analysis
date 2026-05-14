@@ -4,7 +4,7 @@ PIP := $(VENV)/bin/pip
 MNE_BIDS := $(VENV)/bin/mne_bids_pipeline
 BIDS_ROOT := /zi/home/simon.kern/highspeed-MEG-bids
 
-.PHONY: all init install preprocessing preprocessing_slurm check-bids
+.PHONY: all init install preprocessing preprocessing_slurm preprocessing-cleanup check-bids
 
 all: init install preprocessing
 
@@ -32,3 +32,21 @@ preprocessing: check-venv check-bids
 
 preprocessing_slurm: check-bids
 	sbatch run_preprocessing.sbatch
+
+preprocessing-cleanup: check-bids
+	@echo "=== Files that will be removed ==="
+	@echo ""
+	@echo "-- Intermediate .fif files (keeping *_proc-clean_raw.fif) --"
+	@find $(BIDS_ROOT)/derivatives/ -name "*.fif" ! -name "*_proc-clean_raw.fif" -type f
+	@echo ""
+	@echo "-- Virtual environment: $(VENV) --"
+	@if [ -d "$(VENV)" ]; then echo "  $(VENV)/ ($$(du -sh $(VENV) | cut -f1))"; else echo "  (not found)"; fi
+	@echo ""
+	@echo "-- Pipeline cache: $(BIDS_ROOT)/derivatives/_cache --"
+	@if [ -d "$(BIDS_ROOT)/derivatives/_cache" ]; then echo "  $(BIDS_ROOT)/derivatives/_cache/ ($$(du -sh $(BIDS_ROOT)/derivatives/_cache | cut -f1))"; else echo "  (not found)"; fi
+	@echo ""
+	@read -p "Proceed with deletion? [y/N] " confirm && [ "$$confirm" = "y" ] || { echo "Aborted."; exit 1; }
+	find $(BIDS_ROOT)/derivatives/ -name "*.fif" ! -name "*_proc-clean_raw.fif" -type f -delete
+	@if [ -d "$(VENV)" ]; then rm -rf $(VENV); echo "Removed $(VENV)"; fi
+	@if [ -d "$(BIDS_ROOT)/derivatives/_cache" ]; then rm -rf $(BIDS_ROOT)/derivatives/_cache; echo "Removed $(BIDS_ROOT)/derivatives/_cache"; fi
+	@echo "Done."

@@ -22,6 +22,14 @@ from meg_utils.plotting import savefig, normalize_lims
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 from meg_utils import misc
 from scipy.stats import f_oneway
+plt.rc('font', size=14)          # default text
+plt.rc('axes', titlesize=16)     # axes title
+plt.rc('axes', labelsize=12)     # x and y labels
+plt.rc('xtick', labelsize=11)    # x tick labels
+plt.rc('ytick', labelsize=11)    # y tick labels
+plt.rc('legend', fontsize=11)    # legend
+
+sns.set_context('paper', font_scale=1.5)
 
 round_to_base = lambda data, base: np.round(data / base) * base
 
@@ -107,6 +115,7 @@ for i, df in enumerate([df_meg_proba, df_fmri_proba]):
 
     # only subselect classifiers for the current image being shown
     df = df[df.stimulus==df.classifier]
+    df['interval'] = df.interval.apply(lambda x: f'{settings.format_interval(x)} ms')
     ax = axs[i, 0]
     sns.lineplot(df, x='timepoint', y='probability', hue='serial_position',
                  palette=settings.palette_wittkuhn1, ax=ax, legend=(i==0))
@@ -117,24 +126,27 @@ for i, df in enumerate([df_meg_proba, df_fmri_proba]):
 
     if i==0:
         ax.legend(title='interval', loc='upper right')
-        ax.legend(title='sequence position', loc='upper right')
+        ax.legend(title='sequence speed', loc='upper right')
+    else:
+        axs[i, 1].set_xticks(np.arange(1, 9), minor=True)
+        axs[i, 0].set_xticks(np.arange(1, 9), minor=True)
 
-    axs[i, 0].set(title='by Serial Position')
-    axs[i, 1].set(title='by Interval Speed')
+    axs[i, 0].set(title=f'By serial position ({cond})')
+    axs[i, 1].set(title=f'By interval speed ({cond})')
 
     axs[i, 0].set(ylabel='probability (normalized)',
                   xlabel='time after stim onset (s)')
     axs[i, 1].set(ylabel='probability (normalized)',
                   xlabel='time after stim onset (s)')
-    axs[i, 0].annotate(cond, xy=(0, 0.5), xycoords='axes fraction',
-                        xytext=(-80, 0), textcoords='offset points',
-                        va='center', ha='center', rotation=90,
-                        fontsize=16, fontweight='bold')
 
-fig.suptitle('Decoding Fast Images Individually')
+
+    # axs[i, 0].annotate(cond, xy=(0, 0.5), xycoords='axes fraction',
+    #                     xytext=(-80, 0), textcoords='offset points',
+    #                     va='center', ha='center', rotation=90,
+    #                     fontsize=16, fontweight='bold')
+
 plotting.savefig(fig, f'{settings.plot_dir}/figures/fast_images_decoding.png')
 #%% statistical analysis
-
 
 # first peak decoding
 
@@ -209,7 +221,7 @@ fig_cm, ax_cm = plt.subplots(figsize=[6, 5])
 
 confmats = []
 
-for subject in tqdm(settings.layout.subjects):
+for subject in tqdm(settings.layout_MEG.subjects):
 
     clf = bids_utils.load_latest_classifier(subject)
     data_x, data_y, df_beh = bids_utils.load_fast_images(subject)

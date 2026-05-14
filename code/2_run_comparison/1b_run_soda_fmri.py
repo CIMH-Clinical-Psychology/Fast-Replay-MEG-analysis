@@ -40,7 +40,7 @@ from settings import intervals_3T as intervals
 
 
 #%% settings
-
+sns.set_context('paper', font_scale=1.5)
 
 bids_base = BIDSPath(
     root=layout.derivatives['derivatives'].root,
@@ -102,13 +102,14 @@ pkl_slopes = str(bids_base.copy().update(processing='soda', suffix='slopes', ext
 joblib.dump(df_slopes, pkl_slopes)
 
 df_mean = df_slopes.groupby(['tr', 'interval', 'subject']).mean(True).reset_index()
+intervals_plot = [iv for iv in intervals if iv != 2048]
 
 Stop
 #%% overview of mean slopes across intervals
 df_slopes = joblib.load(pkl_slopes)
 df_mean = df_slopes.groupby(['tr', 'interval', 'subject']).mean(True).reset_index()
 
-fig, ax = plt.subplots(1, 1, figsize=[8, 6])
+fig, ax = plt.subplots(1, 1, figsize=[8, 6.4])
 
 sns.lineplot(df_mean[df_mean.interval!=2048], x='tr', y='slope', hue='interval',
              palette=settings.palette_wittkuhn2, ax=ax)
@@ -116,14 +117,17 @@ sns.lineplot(df_mean[df_mean.interval!=2048], x='tr', y='slope', hue='interval',
 ax.axhline(0, linestyle='--', c='black', alpha=0.3)
 ax.set_xticks(np.arange(1, 14))
 ax.set(title='Slopes at different interval speeds', xlabel='TR')
+handles, labels = ax.get_legend_handles_labels()
+ax.legend(handles, [f'{settings.format_interval(l)} ms' for l in labels],
+          title='interval')
 savefig(fig, settings.plot_dir + '/figures/SODA_slopes_3T.png')
 #%% group-level: slope curves with cluster permutation and signflip tests
 
 df_slopes = joblib.load(pkl_slopes)
+df_mean = df_slopes.groupby(['tr', 'interval', 'subject']).mean(True).reset_index()
 
-intervals_plot = [iv for iv in intervals if iv != 2048]
 n_iv = len(intervals_plot)
-fig, axs = plt.subplots(1, n_iv, figsize=[4 * n_iv, 4])
+fig, axs = plt.subplots(1, n_iv, figsize=[4 * n_iv, 3.3])
 if n_iv == 1:
     axs = [axs]
 
@@ -139,14 +143,17 @@ for i, interval in enumerate(intervals_plot):
     df_sel = df_mean[df_mean.interval==interval]
     sns.lineplot(df_sel, x='tr', y='slope', color=settings.palette_wittkuhn2[i],
                  ax=ax)
-    ax.set_xticks(np.arange(1, 14))
+    ax.set_xticks(np.arange(1, 14, 2))
+    ax.set_xticks(np.arange(1, 14), minor=True)
+    ax.set_yticks(np.arange(-2, 5, 2)/10)
+    ax.set_yticks(np.arange(-2, 5, 1)/10, minor=True)
     ax.axhline(0, linestyle='--', c='black', alpha=0.4)
     ax.axvspan(*tr_onset, color='#7a41a6', linewidth=1, alpha=0.2,
                label='onset period')
     ax.axvspan(*tr_offset, color='#23917f', linewidth=1, alpha=0.2,
                label='offset period')
 
-    ax.set_title(f'{interval} ms')
+    ax.set_title(f'{settings.format_interval(interval)} ms')
     if i > 0:
         ax.set_ylabel('')
 
@@ -208,14 +215,13 @@ for ax in fig.axes:
 leg = fig.legend(by_label.values(), by_label.keys(), loc='upper right',
            bbox_to_anchor=(0.99, 0.99), ncol=2, fontsize='small')
 
-fig.suptitle('SODA on fMRI\nSlopes during fast sequence presentation')
+# fig.suptitle('SODA on fMRI\nSlopes during fast sequence presentation')
 savefig(fig, settings.plot_dir + '/figures/soda_slopes_all.png')
 
 
 
 #%% participant-level: heatmap of slopes
 
-fig, axs = plt.subplots(2, 2, figsize=[14, 8])
 fig, axs = plt.subplots(1, n_iv, figsize=[4 * n_iv, 4])
 axs.flat[-1].axis('off')
 
@@ -235,18 +241,26 @@ for i, (interval) in enumerate(intervals[:-1]):
     onset_cols = list(range(tr_onset[0]-1, tr_onset[1]))
     df_interval = df_interval.assign(_sort=df_interval[onset_cols].mean(axis=1)).sort_values('_sort', ascending=False).drop(columns='_sort')
     sns.heatmap(df_interval, cmap='RdBu_r', ax=ax, cbar=False)
-    ax.set(ylabel='subject', xlabel='tr', title=f'{interval} ms')
+    ax.set(ylabel='subject', xlabel='tr', title=f'{settings.format_interval(interval)} ms')
+    ax.set_xticks(np.arange(13) + 0.5, np.arange(1, 14))
 
-    ax.set_xticks(np.arange(13), np.arange(1, 14))
-    ax.set_yticks(np.arange(len(subjects))[::4], subjects[::4])
+    # y-ticks: every 3rd subject labeled (major), in-between as minor
+    subjects_y = list(df_interval.index)
+    y_positions = np.arange(len(subjects_y)) + 0.5
+    ax.set_yticks(y_positions[::3])
+    ax.set_yticklabels(subjects_y[::3], rotation=0)
+    minor_mask = np.ones(len(y_positions), dtype=bool)
+    minor_mask[::3] = False
+    ax.set_yticks(y_positions[minor_mask], minor=True)
 
 plotting.normalize_lims(axs, which='v')
 
-fig_cb, ax_cb = plt.subplots(figsize=[0.3, 3])
-fig_cb.colorbar(axs.flat[0].collections[0], cax=ax_cb, label='slope')
-savefig(fig_cb, settings.plot_dir + '/figures/soda_slopes_heatmap_cbar.png')
+fig_cb, ax_cb = plt.subplots(figsize=[10, 0.8], layout='constrained')
+fig_cb.colorbar(axs.flat[0].collections[0], cax=ax_cb, label='slope',
+                orientation='horizontal')
+savefig(fig_cb, settings.plot_dir + '/figures/soda_slopes_heatmap_cbar.png', tight=False)
 
-fig.suptitle('Mean slopes for all participants')
+# fig.suptitle('Mean slopes for all participants')
 savefig(fig, settings.plot_dir + '/figures/soda_slopes_heatmap.png')
 
 
@@ -255,7 +269,9 @@ savefig(fig, settings.plot_dir + '/figures/soda_slopes_heatmap.png')
 import matplotlib.lines as mlines
 from matplotlib.colors import LinearSegmentedColormap
 
-fig, axs = plt.subplots(2, n_iv, figsize=[20, 10])
+df_mean = df_slopes.groupby(['tr', 'interval', 'subject']).mean(True).reset_index()
+
+fig, axs = plt.subplots(2, n_iv, figsize=[20, 8], sharey=True)
 
 for i, interval in enumerate(intervals[:-1]):
     for j, period in enumerate(['onset', 'offset']):
@@ -310,9 +326,15 @@ for i, interval in enumerate(intervals[:-1]):
                         s=10, ax=ax)
         for k, (subj, mean_val) in enumerate(zip(subjects_sorted, mean_slope_sorted)):
             ax.scatter(k, mean_val, marker='D', s=40, color='black', zorder=5)
-        ax.set_xticklabels(ax.get_xticklabels(), rotation=90, fontsize=8)
+        # x-ticks: every 2nd subject labeled (major, rotated), in-between as minor
+        x_positions = np.arange(len(subjects_sorted))
+        ax.set_xticks(x_positions[::2])
+        ax.set_xticklabels(subjects_sorted[::2], rotation=90, fontsize=8)
+        minor_mask = np.ones(len(x_positions), dtype=bool)
+        minor_mask[::2] = False
+        ax.set_xticks(x_positions[minor_mask], minor=True)
         ax.axhline(0, linestyle='--', c='black')
-        ax.set(title=f'{interval} ms, {period}', ylabel=f'mean slope at {period} period')
+        ax.set(title=f'{settings.format_interval(interval)} ms, {period}', ylabel=f'mean slope')
 
         # annotate significant participants with a star below their column
         y_bottom, y_top = ax.get_ylim()
@@ -345,20 +367,22 @@ fig.legend(handles=legend_handles, loc='center right', ncol=1,
 fig.tight_layout(rect=[0.03, 0, 0.90, 1])
 
 # row labels
-fig.text(0.01, 0.75, 'onset', va='center', ha='center', fontsize=14,
-         fontweight='bold', rotation=90)
-fig.text(0.01, 0.25, 'offset', va='center', ha='center', fontsize=14,
-         fontweight='bold', rotation=90)
+fig.text(0.01, 0.75, 'onset period', va='center', ha='center', fontsize=14,
+          rotation=90)
+fig.text(0.01, 0.25, 'offset period', va='center', ha='center', fontsize=14,
+         rotation=90)
 
 # colorbar for mean slope (next to upper row)
-cbar_ax1 = fig.add_axes([0.91, 0.55, 0.015, 0.35])
+cbar_ax1 = fig.add_axes([0.91, 0.55, 0.0075, 0.35])
 sm1 = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
-fig.colorbar(sm1, cax=cbar_ax1, label='mean slope')
+cb1 = fig.colorbar(sm1, cax=cbar_ax1, label='mean slope')
+cb1.ax.tick_params(rotation=90)
 
 # colorbar for decoding accuracy (next to lower row)
-cbar_ax2 = fig.add_axes([0.91, 0.08, 0.015, 0.35])
+cbar_ax2 = fig.add_axes([0.91, 0.08, 0.0075, 0.35])
 sm2 = plt.cm.ScalarMappable(cmap=acc_cmap, norm=acc_norm)
-fig.colorbar(sm2, cax=cbar_ax2, label='decoding accuracy')
+cb2 = fig.colorbar(sm2, cax=cbar_ax2, label='decoding accuracy')
+cb2.ax.tick_params(rotation=90)
 
 savefig(fig, settings.plot_dir + '/figures/soda_trial_level_peaks.png', tight=False)
 
@@ -387,7 +411,7 @@ df_slopes_mean = df_slopes_mean.groupby(['subject', 'period']).mean(True).reset_
 
 df_merged = df_slopes_mean.merge(df_acc, on='subject', how='right')
 
-fig, axs = plt.subplots(2, 2, figsize=[10, 8])
+fig, axs = plt.subplots(2, 2, figsize=[8, 6.4])
 
 for j, (period) in enumerate(['onset','offset']):
     # top row: decoding accuracy
@@ -399,8 +423,11 @@ for j, (period) in enumerate(['onset','offset']):
                 line_kws={'alpha': 0.7}, ax=ax)
     ax.text(0.5, 0.95, f'r={r:.2f}, p={p:.3f}', transform=ax.transAxes,
             va='top', ha='center', fontsize=12)
-    ax.set(title=f'decoding accuracy ~ {period} slope',
+    ax.set(title=f'{period.capitalize()} slope ~ decoding acc.',
            ylabel=f'mean {period} slope')
+    ax.set_xticks(np.arange(3, 10)/10, minor=True)
+    if j==0:
+        ax.set_xlabel('')
 
     # bottom row: behavioural accuracy
     ax = axs[j, 1]
@@ -411,11 +438,14 @@ for j, (period) in enumerate(['onset','offset']):
                 line_kws={'alpha': 0.7}, ax=ax)
     ax.text(0.5, 0.95, f'r={r:.2f}, p={p:.3f}', transform=ax.transAxes,
             va='top', ha='center', fontsize=12)
-    ax.set(title=f'behavioural accuracy ~ {period} slope',
+    ax.set(title=f'{period.capitalize()} slope ~ behavioural acc.',
            xlabel='behavioural accuracy',
-           ylabel=f'mean {period} slope')
+           ylabel=f'')
+    ax.set_xticks(np.arange(5, 11)/10, minor=True)
+    if j==0:
+        ax.set_xlabel('')
 
-fig.suptitle('Mean slope across conditions vs decoding and behavioral accuracy')
+# fig.suptitle('Mean slope across conditions vs decoding and behavioral accuracy')
 fig.tight_layout()
 savefig(fig, settings.plot_dir + '/figures/soda_correlations_mean.png')
 
@@ -437,7 +467,7 @@ for i, interval in enumerate([32, 64, 128, 512]):
                     line_kws={'alpha': 0.7}, ax=ax)
         ax.text(0.5, 0.95, f'r={r:.2f}, p={p:.3f}', transform=ax.transAxes,
                 va='top', ha='center', fontsize=12)
-        ax.set(title=f'{interval} ms')
+        ax.set(title=f'{settings.format_interval(interval)} ms')
         ax.set_ylabel(f'{period}\nmean slope' if i == 0 else '')
         ax.set_xlabel(f'behavioural performance' if j == 1 else '')
 
@@ -461,7 +491,7 @@ for i, interval in enumerate([32, 64, 128, 512]):
                     line_kws={'alpha': 0.7}, ax=ax)
         ax.text(0.5, 0.95, f'r={r:.2f}, p={p:.3f}', transform=ax.transAxes,
                 va='top', ha='center', fontsize=12)
-        ax.set(title=f'{interval} ms')
+        ax.set(title=f'{settings.format_interval(interval)} ms')
         ax.set_ylabel(f'{period}\nmean slope' if i == 0 else '')
         ax.set_xlabel(f'decoding accuracy' if j == 1 else '')
 
@@ -494,8 +524,8 @@ for a in range(n_iv):
         corr_p[a, b] = p
 
 df_corr = pd.DataFrame(corr_r,
-                       index=[f'{iv} ms' for iv in intervals],
-                       columns=[f'{iv} ms' for iv in intervals])
+                       index=[f'{settings.format_interval(iv)} ms' for iv in intervals],
+                       columns=[f'{settings.format_interval(iv)} ms' for iv in intervals])
 
 fig, axs = plt.subplots(1, 2, figsize=[12, 4])
 
@@ -522,7 +552,7 @@ for a in range(n_iv):
         iax = inner_axs[a, b]
         if a == b:
             iax.hist(peak_matrix[:, a], bins=10, color='steelblue', edgecolor='white')
-            iax.set_title(f'{intervals[a]} ms', fontsize=8)
+            iax.set_title(f'{settings.format_interval(intervals[a])} ms', fontsize=8)
         elif a > b:
             mask = ~(np.isnan(peak_matrix[:, b]) | np.isnan(peak_matrix[:, a]))
             r, p = pearsonr(peak_matrix[mask, b], peak_matrix[mask, a])
@@ -591,7 +621,7 @@ for i, interval in enumerate(intervals):
     ax.text(0.05, 0.97, f'r={r:.2f}, p={p:.3f}', transform=ax.transAxes,
             va='top', ha='left', fontsize=9)
     ax.axhline(0, linestyle='--', c='black', alpha=0.4)
-    ax.set(title=f'{interval=} ms', xlabel='trial position (normalised)', ylabel='peak slope')
+    ax.set(title=f'{settings.format_interval(interval)} ms', xlabel='trial position (normalised)', ylabel='peak slope')
 
 sns.despine()
 fig.suptitle('Temporal drift: slopes across trial position (blue=individual, black=group)')
@@ -645,7 +675,7 @@ for i, interval in enumerate(intervals):
         ax.text(0.05, 0.97, f'r={r:.2f}, p={p:.3f}', transform=ax.transAxes,
                 va='top', ha='left', fontsize=9)
     ax.axhline(0, linestyle='--', c='black', alpha=0.4)
-    ax.set(title=f'{interval=} ms', xlabel='reaction time (z-scored)', ylabel='peak slope')
+    ax.set(title=f'{settings.format_interval(interval)} ms', xlabel='reaction time (z-scored)', ylabel='peak slope')
 
 sns.despine()
 fig.suptitle('Slopes vs reaction time (correct trials only)')
@@ -689,8 +719,8 @@ for j, period in enumerate(['onset', 'offset']):
            capsize=4, color=[settings.palette_wittkuhn2[i] for i in range(len(df_sel))],
            edgecolor='black', linewidth=0.5)
     ax.set_xticks(x_pos)
-    ax.set_xticklabels(df_sel['interval'].values)
-    ax.set_xlabel('interval')
+    ax.set_xticklabels([settings.format_interval(iv) for iv in df_sel['interval'].values])
+    ax.set_xlabel('interval (ms)')
     ax.set_ylabel("Cohen's d")
     ax.set_title(f"Group mean effect size ({period}, Cohen's d with 95% CI)")
     ax.axhline(0, linestyle='--', alpha=0.5, c='black')
@@ -726,7 +756,7 @@ for i, interval in enumerate(intervals[:-1]):
                 line_kws={'alpha': 0.7}, ax=ax)
     ax.text(0.5, 0.95, f'r={r:.2f}, p={p:.3f}', transform=ax.transAxes,
             va='top', ha='center', fontsize=12)
-    ax.set(title=f'{interval=} ms')
+    ax.set(title=f'{settings.format_interval(interval)} ms')
 
 fig.suptitle('Slopes correlations with behavioral accuracy')
 savefig(fig, settings.plot_dir + '/figures/soda_correlations.png')
@@ -857,7 +887,7 @@ for i, interval in enumerate(intervals[:-1]):
     ax.text(0.5, 0.98, f'r={r:.2f}, p={p:.3f}', transform=ax.transAxes,
             va='top', ha='center', fontsize=9)
     ax.axhline(0, linestyle='--', c='black', alpha=0.4)
-    ax.set(title=f'{interval=} ms', xlabel='')
+    ax.set(title=f'{settings.format_interval(interval)} ms', xlabel='')
 
 sns.despine()
 fig.suptitle('Trial slope at expected TR: correct vs incorrect responses')

@@ -33,6 +33,7 @@ from mne.stats import permutation_cluster_1samp_test
 from mne.stats import permutation_t_test
 #%% settings
 
+sns.set_context('paper', font_scale=1.5)
 # zscore = lambda x, **kwargs: x
 
 normalization = 'lambda x: x/x.mean(0)'
@@ -61,7 +62,7 @@ try:
     df_seq = res['df_seq']
 except FileNotFoundError:
     print('results not computed yet')
-stop
+
 #%% run TDLM calculation, save individual trial's sequenceness
 
 
@@ -163,6 +164,11 @@ sns.lineplot(df_mean[df_mean.direction=='forward'], x='lag', y='sequenceness', h
 ax.axhline(0, linestyle='--', c='black', alpha=0.3)
 ax.set(title='Sequenceness at different interval speeds')
 ax.set_ylabel('Sequenceness')
+ax.set_xticks(np.arange(0, 900, 100))
+ax.set_xticks(np.arange(0, 900, 50), minor=True)
+handles, labels = ax.get_legend_handles_labels()
+ax.legend(handles, [f'{settings.format_interval(l)} ms' for l in labels],
+          title='sequence speed')
 savefig(fig, settings.plot_dir + '/figures/TDLM_sequenceness_MEG.png')
 
 #%% group-level: sequenceness
@@ -177,7 +183,7 @@ df_seq = res['df_seq']
 max_lags = [np.round(int(((iv/10) + 10))/3).astype(int) for iv in intervals]
 mosaic = ''.join([f'{i}'*l for i, l in enumerate (max_lags)])
 
-fig, axs = plt.subplot_mosaic(mosaic, figsize=[18, 4], dpi=80, sharey=True)
+fig, axs = plt.subplot_mosaic(mosaic, figsize=[18, 3], dpi=80, sharey=True)
 # fig, axs = plt.subplots(2, 2, figsize=[14, 8], dpi=80)
 axs = list(axs.values())
 
@@ -189,7 +195,7 @@ for i, interval in enumerate(intervals):
                                     which=['fwd', 'bkw'],
                                     ax=ax, plot95=False, rescale=False)
 
-    # ax.annotate(f'{interval} ms', xy=(0, 0.5), xycoords='axes fraction',
+    # ax.annotate(f'{settings.format_interval(interval)} ms', xy=(0, 0.5), xycoords='axes fraction',
     #             xytext=(-0.2, 0.5), textcoords='axes fraction',
     #             fontsize=12, fontweight='bold', rotation=90,
     #             va='center', ha='center', annotation_clip=False)
@@ -199,6 +205,7 @@ for i, interval in enumerate(intervals):
     # ax.set_ylim([-2, 2])
 
     ax.set_xticks(np.arange(0, max(ax.get_xticks()), 100))
+    ax.set_xticks(np.arange(0, max(ax.get_xticks()), 50), minor=True)
     ticks = list(ax.get_xticks())
     if interval==512:
         ticks.remove(600)
@@ -207,15 +214,14 @@ for i, interval in enumerate(intervals):
     for label in ax.get_xticklabels():
         label.set_rotation(45)
 
-
     ax.set_ylabel('' if i>0 else 'Sequenceness\n(z-scored)')
 
-    ax.set_title(f'{interval} ms')
-    fig.suptitle('TDLM on MEG\nSequenceness during fast sequence presentation')
+    ax.set_title(f'{settings.format_interval(interval)} ms')
+    # fig.suptitle('TDLM on MEG\nSequenceness during fast sequence presentation')
 
 plotting.normalize_lims(axs, which='y')
 
-# signflip permutation
+# statistical testing
 for i, interval in enumerate(intervals):
     ax = axs[ i]
     # first check forward sequencenes
@@ -249,7 +255,7 @@ for i, interval in enumerate(intervals):
             ylim = ax.get_ylim()
             ypos = ylim[0] + (ylim[1] - ylim[0]) * 0.05
             ax.plot(expected_lag_ms, ypos, '*', color='black', markersize=8,
-                    zorder=10, label=f'{direction} t-test p<0.05')
+                    zorder=10, label=f't-test p<0.05' if direction=='bkw' else None)
     ax.get_legend().remove()
 
 by_label = {}
@@ -257,7 +263,8 @@ for ax in fig.axes:
     for h, l in zip(*ax.get_legend_handles_labels()):
         by_label.setdefault(l, h)
 
-fig.legend(by_label.values(), by_label.keys(), loc="upper right", bbox_to_anchor=(1, 0.95))
+fig.legend(by_label.values(), by_label.keys(), loc="upper right", bbox_to_anchor=(1, 0.95),
+           ncol=3)
 # fig.tight_layout()
 savefig(fig, f'{settings.plot_dir}/figures/fast_images_sequenceness_all.png')
 
@@ -275,36 +282,9 @@ sb_mean = res['sb_mean']
 df_seq = res['df_seq']
 
 # heatmap
-fig, axs = plt.subplots(2, 2, figsize=[12, 8])
 
 vmin = df_seq.sequenceness.quantile(0.001)
 vmax = df_seq.sequenceness.quantile(0.999)
-
-for i, interval in enumerate(sorted(df_seq.interval.unique())):
-    sf_isi = sf_mean[interval][:, 0, :]
-    ax = axs.flat[i]
-    ax.clear()
-
-    max_lag = sf_isi.shape[-1]
-    df_heatmap = pd.DataFrame(sf_isi,
-                              columns=np.arange(0, max_lag*10, 10),
-                              index=layout.subjects,)
-
-    # sort by mean value around expected time lag
-    exp_lag = settings.exp_lag[interval]*10
-    df_heatmap['sort_index'] = np.mean([df_heatmap[exp_lag+i] for i in [-10, 0, 10]], axis=0)
-    df_heatmap = df_heatmap.sort_values('sort_index', ascending=False).drop('sort_index', axis=1)
-
-    sns.heatmap(df_heatmap, cmap='RdBu_r', center=0,  vmin=vmin, vmax=vmax, ax=ax)
-    # ax.set_xticks(np.arange(0, max_lag)[::5 if interval<500 else 10], np.arange(0, max_lag*10, 10)[::5 if interval<500 else 10])
-    # ax.set_yticks(np.arange(len(layout.subjects))[::2], layout.subjects[::2])
-    ax.set(ylabel='subject', xlabel='time lag', title=f'{interval} ms')
-
-# plotting.normalize_lims(axs, which='v')
-
-
-fig.suptitle('Forward sequenceness across participants')
-savefig(fig, settings.plot_dir + '/figures/sequenceness_heatmap_subjects.png')
 
 # mosaic heatmap: forward and backward in one row with proportional widths
 max_lags = [np.round(int(((iv/10) + 10))/3).astype(int) for iv in intervals]
@@ -330,7 +310,23 @@ for direction, s_mean, dir_label in [('fwd', sf_mean, 'Forward'),
 
         sns.heatmap(df_heatmap, cmap='RdBu_r', center=0, vmin=vmin, vmax=vmax, ax=ax,
                     cbar=False)
-        ax.set(ylabel='subject' if i==0 else '', xlabel='time lag', title=f'{interval} ms')
+        ax.set(ylabel='subject' if i==0 else '', xlabel='time lag', title=f'{settings.format_interval(interval)} ms')
+
+        # y-ticks: every 3rd subject labeled (major), in-between as minor
+        subjects_y = list(df_heatmap.index)
+        y_positions = np.arange(len(subjects_y)) + 0.5
+        ax.set_yticks(y_positions[::3])
+        ax.set_yticklabels(subjects_y[::3], rotation=0)
+        minor_mask = np.ones(len(y_positions), dtype=bool)
+        minor_mask[::3] = False
+        ax.set_yticks(y_positions[minor_mask], minor=True)
+
+        # x-ticks: every 50 ms
+        lags = np.array(df_heatmap.columns)
+        x_positions = np.arange(len(lags)) + 0.5
+        major_mask = lags % 50 == 0
+        ax.set_xticks(x_positions[major_mask])
+        ax.set_xticklabels(lags[major_mask], rotation=0)
 
     fig.suptitle(f'{dir_label} sequenceness across participants')
     savefig(fig, f'{settings.plot_dir}/figures/sequenceness_heatmap_subjects_{direction}_mosaic.png')
@@ -343,8 +339,6 @@ savefig(fig_cb, f'{settings.plot_dir}/figures/sequenceness_heatmap_subjects_cbar
 
 
 
-
-
 #%% trial-subj overview: the complete plot
 
 res = joblib.load(pkl_seq)
@@ -353,7 +347,7 @@ sf_trials = res['sf_trials']
 df_responses = bids_utils.load_responses_sequence_MEG()
 
 
-fig, axs = plt.subplots(2, 2, figsize=[18, 10])
+fig, axs = plt.subplots(2, 2, figsize=[18, 10], sharey=True)
 
 # save information per trial
 for i, (interval, sf) in enumerate(sf_trials.items()):
@@ -393,8 +387,9 @@ for i, (interval, sf) in enumerate(sf_trials.items()):
     for j, (subj, mean_val) in enumerate(zip(subjects_sorted, mean_seq_sorted)):
         ax.scatter(j, mean_val, marker='D', s=40, color='black', zorder=5)
     ax.set_xticklabels(ax.get_xticklabels(), rotation=90)
+    ax.set_yticks(np.arange(-2, 2, 0.25), minor=True)
     ax.axhline(0, linestyle='--', c='black')
-    ax.set(title=f'interval {interval} ms\n', ylabel='mean sequenceness around expected lag')
+    ax.set(title=f'{settings.format_interval(interval)} ms\n', ylabel='mean sequenceness at expected lag')
 
     # annotate significant participants with a star below their column
     y_bottom, y_top = ax.get_ylim()
@@ -449,7 +444,7 @@ sf_mean = res['sf_mean']
 df_responses = bids_utils.load_responses_sequence_MEG()
 
 # peak decoding accuracy per subject from localizer cross-validation
-dec_acc = np.array([bids_utils.get_decoding_accuracy(s) for s in subjects])
+dec_acc = np.array([bids_utils.get_decoding_accuracy_MEG(s) for s in subjects])
 
 fig, axs = plt.subplots(2, 4, figsize=[18, 8])
 
@@ -471,7 +466,7 @@ for i, (interval, sf) in enumerate(sf_mean.items()):
                 line_kws={'alpha': 0.7}, ax=ax)
     ax.text(0.5, 0.95, f'r={r:.2f}, p={p:.3f}', transform=ax.transAxes,
             va='top', ha='center', fontsize=12)
-    ax.set(title=f'{interval=} ms')
+    ax.set(title=f'{settings.format_interval(interval)} ms')
 
     # row 1: behavioral response accuracy vs sequenceness
     beh_acc = np.array([df_responses[(df_responses.subject == s[-2:]) &
@@ -485,7 +480,7 @@ for i, (interval, sf) in enumerate(sf_mean.items()):
                 line_kws={'alpha': 0.7}, ax=ax)
     ax.text(0.5, 0.95, f'r={r:.2f}, p={p:.3f}', transform=ax.transAxes,
             va='top', ha='center', fontsize=12)
-    ax.set(title=f'{interval=} ms')
+    ax.set(title=f'{settings.format_interval(interval)} ms')
 
 fig.suptitle('Sequenceness correlations with decoding and behavioral accuracy')
 savefig(fig, settings.plot_dir + '/figures/sequenceness_correlations.png')
@@ -505,7 +500,10 @@ sns.regplot(data=df_dec, x='decoding accuracy', y='mean sequenceness',
             line_kws={'alpha': 0.7}, ax=ax)
 ax.text(0.5, 0.95, f'r={r:.2f}, p={p:.3f}', transform=ax.transAxes,
         va='top', ha='center', fontsize=12)
-ax.set(title='decoding accuracy', ylabel='mean sequenceness\naround expected time lag')
+ax.set_yticks(np.arange(0, 9, 1)/10, minor=True)
+ax.set_xticks(np.arange(8, 20, 2)/20)
+ax.set_xticks(np.arange(8, 20, 1)/20, minor=True)
+ax.set(title='decoding accuracy', ylabel='mean sequenceness\nat expected time lag')
 
 # right: behavioral accuracy (mean across conditions) vs mean sequenceness
 beh_acc_mean = np.array([df_responses[df_responses.subject == s[-2:]].accuracy.mean()
@@ -518,11 +516,15 @@ sns.regplot(data=df_beh, x='behavioral accuracy', y='mean sequenceness',
             line_kws={'alpha': 0.7}, ax=ax)
 ax.text(0.5, 0.95, f'r={r:.2f}, p={p:.3f}', transform=ax.transAxes,
         va='top', ha='center', fontsize=12)
-ax.set(title='behavioural accuracy', ylabel='mean sequenceness\naround expected time lag')
+ax.set_ylabel('')
+ax.set_yticks(np.arange(0, 9, 1)/10, minor=True)
+# ax.set_xticks(np.arange(16, 40, 2)/20)
+# ax.set_xticks(np.arange(8, 20, 1)/20, minor=True)
+ax.set(title='behavioural accuracy')
 
-fig.suptitle('Mean sequenceness across conditions vs decoding and behavioral accuracy')
+# fig.suptitle('Mean sequenceness across conditions vs decoding and behavioral accuracy')
 fig.tight_layout()
-savefig(fig, settings.plot_dir + '/figures/sequenceness_correlations_mean.png')
+savefig(fig, settings.plot_dir + '/supplement/sequenceness_correlations_mean.png')
 
 
 #%% trial-level: sequenceness at expected lag vs individual trial response
@@ -580,44 +582,44 @@ for i, interval in enumerate(sf_trials):
     ax.text(0.5, 0.98, f'r={r:.2f}, p={p:.3f}', transform=ax.transAxes,
             va='top', ha='center', fontsize=9)
     ax.axhline(0, linestyle='--', c='black', alpha=0.4)
-    ax.set(title=f'{interval=} ms', xlabel='')
+    ax.set(title=f'{settings.format_interval(interval)} ms', xlabel='')
 
 sns.despine()
 fig.suptitle('Trial sequenceness at expected lag: correct vs incorrect responses')
-savefig(fig, settings.plot_dir + '/figures/sequenceness_vs_response.png')
+savefig(fig, settings.plot_dir + '/supplement/sequenceness_vs_response.png')
 
 #%% effect size visualization at expected time lags
+# CALCULATED IN OTHER SCRIPT 4a
+# df = pd.DataFrame()
 
-df = pd.DataFrame()
+# for interval in intervals:
+#     sf = sf_mean[interval][:, 0, :]
+#     expected_lag = settings.exp_lag[interval]
+#     x = sf[:, expected_lag]
+#     n = len(x)
+#     d = pg.compute_effsize(x, y=0)
+#     ci = pg.compute_esci(d, nx=n, ny=n, paired=True)
 
-for interval in intervals:
-    sf = sf_mean[interval][:, 0, :]
-    expected_lag = settings.exp_lag[interval]
-    x = sf[:, expected_lag]
-    n = len(x)
-    d = pg.compute_effsize(x, y=0)
-    ci = pg.compute_esci(d, nx=n, ny=n, paired=True)
+#     df_tmp = pd.DataFrame({'interval': interval,
+#                            'cohens d': d,
+#                            'ci_lo': ci[0],
+#                            'ci_hi': ci[1]}, index=[0])
+#     df = pd.concat([df, df_tmp])
 
-    df_tmp = pd.DataFrame({'interval': interval,
-                           'cohens d': d,
-                           'ci_lo': ci[0],
-                           'ci_hi': ci[1]}, index=[0])
-    df = pd.concat([df, df_tmp])
-
-fig, ax = plt.subplots(1, 1, figsize=[5, 4])
-x_pos = np.arange(len(df))
-ax.bar(x_pos, df['cohens d'].values,
-       yerr=[df['cohens d'].values - df['ci_lo'].values,
-             df['ci_hi'].values - df['cohens d'].values],
-       capsize=4, color=[settings.palette_wittkuhn2[i] for i in range(len(df))],
-       edgecolor='black', linewidth=0.5)
-ax.set_xticks(x_pos)
-ax.set_xticklabels(df['interval'].values)
-ax.set_xlabel('interval')
-ax.set_ylabel("Cohen's d")
-ax.set_title("Group mean effect size (Cohen's d with 95% CI)")
-ax.axhline(0, linestyle='--', alpha=0.5, c='black')
-savefig(fig, settings.plot_dir + '/figures/tdlm_effect_sizes.png')
+# fig, ax = plt.subplots(1, 1, figsize=[5, 4])
+# x_pos = np.arange(len(df))
+# ax.bar(x_pos, df['cohens d'].values,
+#        yerr=[df['cohens d'].values - df['ci_lo'].values,
+#              df['ci_hi'].values - df['cohens d'].values],
+#        capsize=4, color=[settings.palette_wittkuhn2[i] for i in range(len(df))],
+#        edgecolor='black', linewidth=0.5)
+# ax.set_xticks(x_pos)
+# ax.set_xticklabels([settings.format_interval(iv) for iv in df['interval'].values])
+# ax.set_xlabel('interval (ms)')
+# ax.set_ylabel("Cohen's d")
+# ax.set_title("Group mean effect size (Cohen's d with 95% CI)")
+# ax.axhline(0, linestyle='--', alpha=0.5, c='black')
+# savefig(fig, settings.plot_dir + '/figures/tdlm_effect_sizes.png')
 
 
 #%% supplement: inter-interval: subject consistency across ISI conditions
@@ -643,8 +645,8 @@ for a in range(n_iv):
         corr_p[a, b] = p
 
 df_corr = pd.DataFrame(corr_r,
-                        index=[f'{iv} ms' for iv in interval_labels],
-                        columns=[f'{iv} ms' for iv in interval_labels])
+                        index=[f'{settings.format_interval(iv)} ms' for iv in interval_labels],
+                        columns=[f'{settings.format_interval(iv)} ms' for iv in interval_labels])
 
 fig, axs = plt.subplots(1, 2, figsize=[12, 4])
 
@@ -672,7 +674,7 @@ for a in range(n_iv):
         iax = inner_axs[a, b]
         if a == b:
             iax.hist(peak_matrix[:, a], bins=10, color='steelblue', edgecolor='white')
-            iax.set_title(f'{interval_labels[a]} ms', fontsize=8)
+            iax.set_title(f'{settings.format_interval(interval_labels[a])} ms', fontsize=8)
         elif a > b:
             r, p = pearsonr(peak_matrix[:, b], peak_matrix[:, a])
             iax.scatter(peak_matrix[:, b], peak_matrix[:, a], s=15, alpha=0.7, color='steelblue')
@@ -688,8 +690,8 @@ for a in range(n_iv):
 
 inner_fig.suptitle('Pairwise subject sequenceness across ISI conditions')
 inner_fig.tight_layout()
-savefig(inner_fig, settings.plot_dir + '/figures/sequenceness_inter_interval_scatter.png')
-savefig(fig, settings.plot_dir + '/figures/sequenceness_inter_interval_corr.png')
+savefig(inner_fig, settings.plot_dir + '/supplement/sequenceness_inter_interval_scatter.png')
+savefig(fig, settings.plot_dir + '/supplement/sequenceness_inter_interval_corr.png')
 
 
 #%% supplement: temporal drift: sequenceness vs trial position within experiment
@@ -739,11 +741,11 @@ for i, interval in enumerate(sf_trials):
     ax.text(0.05, 0.97, f'r={r:.2f}, p={p:.3f}', transform=ax.transAxes,
             va='top', ha='left', fontsize=9)
     ax.axhline(0, linestyle='--', c='black', alpha=0.4)
-    ax.set(title=f'{interval=} ms', xlabel='trial position (normalised)', ylabel='peak sequenceness')
+    ax.set(title=f'{settings.format_interval(interval)} ms', xlabel='trial position (normalised)', ylabel='peak sequenceness')
 
 sns.despine()
 fig.suptitle('Temporal drift: sequenceness across trial position (blue=individual, black=group)')
-savefig(fig, settings.plot_dir + '/figures/sequenceness_temporal_drift.png')
+savefig(fig, settings.plot_dir + '/supplement/sequenceness_temporal_drift.png')
 
 
 #%% supplement: trial-level: sequenceness vs reaction time
@@ -792,11 +794,11 @@ for i, interval in enumerate(sf_trials):
     ax.text(0.05, 0.97, f'r={r:.2f}, p={p:.3f}', transform=ax.transAxes,
             va='top', ha='left', fontsize=9)
     ax.axhline(0, linestyle='--', c='black', alpha=0.4)
-    ax.set(title=f'{interval=} ms', xlabel='reaction time (s)', ylabel='peak sequenceness')
+    ax.set(title=f'{settings.format_interval(interval)} ms', xlabel='reaction time (s)', ylabel='peak sequenceness')
 
 sns.despine()
 fig.suptitle('Sequenceness vs reaction time (correct trials only)')
-savefig(fig, settings.plot_dir + '/figures/sequenceness_vs_rt.png')
+savefig(fig, settings.plot_dir + '/supplement/sequenceness_vs_rt.png')
 
 #%% DEPRECATED group-level: bootstrap participants
 
@@ -846,7 +848,7 @@ for i, interval in enumerate(intervals):
     ax.axvline(n_sign, c='darkred', alpha=0.7, linestyle='--')
     ax.text(n_sign + 1, 0.7, f'n={n_sign}', c='darkred')
     # ax.set_xticks(list(ax.get_xticks()) + [n_sign])
-    ax.set_title(f'{interval=} ms')
+    ax.set_title(f'{settings.format_interval(interval)} ms')
     ax.set_ylabel('power\n(% significant)')
     ax.set_xlabel('bootstrapped sample size')
 
@@ -893,11 +895,15 @@ fig, axs = plt.subplots(1, 2, figsize=[10, 4])
 ax = axs[0]
 sns.lineplot(df_power, x='sample_size', y='p', hue='interval', ax=ax)
 ax.axhline(0.05, linestyle='--', c='gray', alpha=0.5, label='p=0.05')
-ax.legend()
+handles, labels = ax.get_legend_handles_labels()
+ax.legend(handles, [f'{settings.format_interval(l)} ms' if l != 'p=0.05' else l for l in labels],
+          title='interval')
 ax = axs[1]
 sns.lineplot(df_power, x='sample_size', y='power', hue='interval', ax=ax)
 ax.axhline(0.05, linestyle='--', c='gray', alpha=0.5, label='p=0.05')
-ax.legend()
+handles, labels = ax.get_legend_handles_labels()
+ax.legend(handles, [f'{settings.format_interval(l)} ms' if l != 'p=0.05' else l for l in labels],
+          title='interval')
 fig.suptitle('Bootstrapped virtual participant by sampling from all trials')
 savefig(fig, settings.plot_dir + '/supplement/bootstrap_participant_from_all_trials.png')
 
@@ -969,7 +975,7 @@ for i, (interval, sf_isi) in enumerate(sf_trials.items()):
         pvals += [p]
     df_interval = pd.DataFrame({'p-value': pvals,
                   'subject': range(1, 31),
-                  'interval': f'{interval} ms'})
+                  'interval': f'{settings.format_interval(interval)} ms'})
     df_pval = pd.concat([df_pval, df_interval])
 
 fig, axs = plt.subplots(1, 4, figsize=[16, 6], sharey=False)

@@ -81,6 +81,22 @@ def _load_ttest():
     return df
 
 
+def _load_combined():
+    """Load combined-period ttest results (array job over n_samples)."""
+    template = bids_base.copy().update(processing='sodattestcombined',
+                                        suffix='powercontour',
+                                        task='NSAMPLES',
+                                        extension='.pkl.gz')
+    pattern = str(template.fpath).replace('task-NSAMPLES', 'task-*')
+    files = sorted(glob(pattern))
+    if not files:
+        return None
+    df = pd.concat([joblib.load(f) for f in files], ignore_index=True)
+    df['method'] = 'sodattestcombined'
+    df = df[df.interval!=2048]
+    return df
+
+
 # ── shared plot helpers ───────────────────────────────────────────────────────
 
 def _contour_ax(ax, Z, X, Y, i=0):
@@ -89,8 +105,8 @@ def _contour_ax(ax, Z, X, Y, i=0):
     for lvl, col, lw in zip(power_levels, contour_colors, contour_widths):
         ax.contour(X, Y, Z, levels=[lvl], colors=[col], linewidths=lw)
     ax.set_xticks(np.arange(0, int(X.max()) + 10, 10))
-    ax.set(xlabel='bootstrapped sample size',
-           ylabel='bootstrapped trials per participant' if i == 0 else '')
+    ax.set(xlabel='sample size',
+           ylabel='trials per participant' if i == 0 else '')
     return cf
 
 
@@ -115,19 +131,21 @@ def _add_colorbar_and_legend(fig, cf, axs):
 def plot_per_interval(df_power, method_name, savepath):
     """Contour plot, one panel per speed condition.
 
-    If data has a 'period' column (onset/offset), creates 2×N layout.
-    Otherwise creates 1×N layout.
+    Rows match the unique periods present in the data (e.g. 2 for onset/offset,
+    1 for combined or for data without a period column).
     """
-    has_period = 'period' in df_power.columns
+    if 'period' in df_power.columns:
+        order = {'onset': 0, 'offset': 1, 'combined': 2}
+        periods = sorted(df_power.period.unique(),
+                         key=lambda p: order.get(p, 99))
+    else:
+        periods = [None]
+    n_rows = len(periods)
     n_iv = len(intervals)
 
-    if has_period:
-        fig, axs = plt.subplots(2, n_iv, figsize=[4 * n_iv, 8])
-        periods = ['onset', 'offset']
-    else:
-        fig, axs = plt.subplots(1, n_iv, figsize=[4 * n_iv, 4])
+    fig, axs = plt.subplots(n_rows, n_iv, figsize=[4 * n_iv, 3.75 * n_rows])
+    if n_rows == 1:
         axs = axs[np.newaxis, :]  # make 2D for uniform indexing
-        periods = [None]
 
     cf = None
     for j, period in enumerate(periods):
@@ -138,11 +156,6 @@ def plot_per_interval(df_power, method_name, savepath):
                 df_sel = df_sel[df_sel.period == period]
 
             assert len(df_sel) > 0
-                # title = f'{interval} ms'
-                # if period is not None:
-                #     title += f', {period}'
-                # ax.set_title(f'{title}\n(no data)')
-                # continue
 
             df_pivot = df_sel.pivot_table(index='n_trials', columns='n_samples',
                                           values='power', aggfunc='mean')
@@ -150,28 +163,26 @@ def plot_per_interval(df_power, method_name, savepath):
             Z = df_pivot.values
             cf = _contour_ax(ax, Z, X, Y, i)
 
-            title = f'{interval} ms'
-            if period is not None:
+            title = f'{settings.format_interval(interval)} ms'
+            if period is not None and n_rows > 1:
                 title += f', {period}'
             ax.set_title(title)
             ax.set_ylim([2, 60])
             ax.set_xlim([2, 80])
+            if j<len(periods)-1:
+                ax.set_xlabel('')
 
-    fig.suptitle(f'SODA power contour ({method_name})')
-    if has_period:
-        row_labels = ['onset period', 'offset period']
-        for j, label in enumerate(row_labels):
-            axs[j, 0].annotate(label,
-                                xy=(0, 0.5), xycoords='axes fraction',
-                                xytext=(-60, 0), textcoords='offset points',
-                                va='center', ha='center', rotation=90,
-                                fontsize=16, fontweight='bold')
+    # fig.suptitle(f'SODA power contour ({method_name})')
+    if periods == [None]:
+        row_labels = ['SODA on fMRI']
     else:
-        axs[0, 0].annotate('SODA on fMRI',
-                             xy=(0, 0.5), xycoords='axes fraction',
-                             xytext=(-60, 0), textcoords='offset points',
-                             va='center', ha='center', rotation=90,
-                             fontsize=16, fontweight='bold')
+        row_labels = [f'{p} period' for p in periods]
+    for j, label in enumerate(row_labels):
+        axs[j, 0].annotate(label,
+                            xy=(0, 0.5), xycoords='axes fraction',
+                            xytext=(-60, 0), textcoords='offset points',
+                            va='center', ha='center', rotation=90,
+                            fontsize=16)
     if cf is not None:
         _add_colorbar_and_legend(fig, cf, axs)
     savefig(fig, savepath, tight=False)
@@ -245,44 +256,46 @@ def plot_comparison(datasets):
 
 # ── 80% power curve comparison ────────────────────────────────────────────────
 
-def plot_80_curve(datasets):
-    """Plot the 80% power contour line for each method, onset and offset separately.
+# def plot_80_curve(datasets):
+    # """Plot the 80% power contour line for each method, onset and offset separately.
 
-    For each method, the mean power across speed conditions is computed
-    per period, then the 80% iso-power line is drawn.
-    """
-    fig, axs = plt.subplots(1, 2, figsize=[14, 6], sharey=True, sharex=True)
-    colors = sns.color_palette()
+    # For each method, the mean power across speed conditions is computed
+    # per period, then the 80% iso-power line is drawn.
+    # """
+    # fig, axs = plt.subplots(1, 2, figsize=[14, 6], sharey=True, sharex=True)
+    # colors = sns.color_palette()
 
-    for j, period in enumerate(['onset', 'offset']):
-        ax = axs[j]
-        for i, (method_name, df_power) in enumerate(datasets):
-            df_sel = df_power[df_power.period == period]
-            df_mean = df_sel.groupby(['n_trials', 'n_samples'])['power'].mean().reset_index()
-            df_pivot = df_mean.pivot_table(index='n_trials', columns='n_samples',
-                                            values='power')
-            X, Y = np.meshgrid(df_pivot.columns.values, df_pivot.index.values)
-            Z = df_pivot.values
-            cs = ax.contour(X, Y, Z, levels=[0.8], colors=[colors[i]], linewidths=2)
-            cs.collections[0].set_label(method_name)
+    # for j, period in enumerate(['onset', 'offset']):
+    #     ax = axs[j]
+    #     for i, (method_name, df_power) in enumerate(datasets):
+    #         df_sel = df_power[df_power.period == period]
+    #         df_mean = df_sel.groupby(['n_trials', 'n_samples'])['power'].mean().reset_index()
+    #         df_pivot = df_mean.pivot_table(index='n_trials', columns='n_samples',
+    #                                         values='power')
+    #         X, Y = np.meshgrid(df_pivot.columns.values, df_pivot.index.values)
+    #         Z = df_pivot.values
+    #         ax.contour(X, Y, Z, levels=[0.8], colors=[colors[i]], linewidths=2)
+    #         ax.plot([], [], color=colors[i], linewidth=2, label=method_name)
 
-        ax.legend(frameon=True)
-        ax.set(xlabel='bootstrapped sample size',
-               ylabel='bootstrapped trials per participant' if j == 0 else '',
-               title=f'{period}')
+    #     ax.legend(frameon=True)
+    #     ax.set(xlabel='bootstrapped sample size',
+    #            ylabel='bootstrapped trials per participant' if j == 0 else '',
+    #            title=f'{period}')
 
-    fig.suptitle('SODA 80% power curve (mean across speed conditions)')
-    fig.tight_layout()
-    savepath = settings.plot_dir + '/figures/soda_power_80_curve_comparison.png'
-    savefig(fig, savepath)
-    print(f'Saved {savepath}')
+    # fig.suptitle('SODA 80% power curve (mean across speed conditions)')
+    # fig.tight_layout()
+    # savepath = settings.plot_dir + '/figures/soda_power_80_curve_comparison.png'
+    # savefig(fig, savepath)
+    # print(f'Saved {savepath}')
 
 
-# ── main ──────────────────────────────────────────────────────────────────────
+#%% ── main ──────────────────────────────────────────────────────────────────────
+sns.set_context('paper', font_scale=1.5)
 
 all_methods = [
     ('permutation t-test', _load_pkl_method('sodasignflip')),
     ('ttest',              _load_ttest()),
+    ('ttest combined',     _load_combined()),
     ('cluster',            _load_pkl_method('sodacluster')),
 ]
 
@@ -293,30 +306,34 @@ fnames = {
     'ttest':              ('soda_power_contour_ttest',
                            'soda_power_contour_ttest_mean',
                            'soda_power_contour_ttest_mean_period'),
+    'ttest combined':     ('soda_power_contour_ttest_combined',
+                           'soda_power_contour_ttest_combined_mean',
+                           None),
     'cluster':            ('soda_power_contour_cluster',
                            'soda_power_contour_cluster_mean',
                            'soda_power_contour_cluster_mean_period'),
 }
 
-df_all = pd.concat([dfx[1] for dfx in all_methods])
+# cross-method per-interval mean: onset/offset rows average across methods that
+# have those periods; combined row uses only the combined-metric method
+df_all = pd.concat([df for name, df in all_methods if name!='ttest combined'])
 plot_per_interval(df_all, 'mean', settings.plot_dir + f'/figures/soda_power_contours_mean.png')
-asd
+
 available = []
 for method_name, df in all_methods:
-    if df is None:
-        print(f'WARNING: no data found for "{method_name}", skipping')
-        continue
     available.append((method_name, df))
     stem_iv, stem_mean, stem_period = fnames[method_name]
-    plot_per_interval(df, method_name,
-                      settings.plot_dir + f'/figures/soda_{stem_iv}.png')
-    plot_mean(df, method_name,
-              settings.plot_dir + f'/figures/{stem_mean}.png')
-    if stem_period is not None:
-        plot_mean_per_period(df, method_name,
-                             settings.plot_dir + f'/figures/soda_{stem_period}.png')
+    plot_per_interval(df, method_name,  settings.plot_dir + f'/figures/soda_{stem_iv}.png')
+    # plot_mean(df, method_name,
+    #           settings.plot_dir + f'/figures/{stem_mean}.png')
+    # if stem_period is not None:
+    #     plot_mean_per_period(df, method_name,
+    #                          settings.plot_dir + f'/figures/soda_{stem_period}.png')
 
-assert len(available) > 0, 'No results found for any method'
-plot_comparison(available)
-plot_80_curve(available)
-print('Done')
+# assert len(available) > 0, 'No results found for any method'
+# plot_comparison(available)
+# 80% curve compares onset/offset across methods; skip methods without those
+# DONE IN OTHER 4a python file
+# plot_80_curve([(n, df) for n, df in available
+#                if {'onset', 'offset'}.issubset(df.period.unique())])
+# print('Done')

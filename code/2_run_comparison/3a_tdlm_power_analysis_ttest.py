@@ -148,7 +148,7 @@ for i, interval in enumerate(intervals):
     df_sel = df_power[df_power.interval == interval]
 
     if len(df_sel) == 0:
-        ax.set_title(f'{interval=} ms\n(no data)')
+        ax.set_title(f'{settings.format_interval(interval)} ms\n(no data)')
         continue
 
     # pivot to 2D grid for contour plot
@@ -167,7 +167,7 @@ for i, interval in enumerate(intervals):
         ax.contour(X, Y, Z, levels=[lvl], colors=[col], linewidths=lw)
 
     ax.set_xticks(np.arange(0, 90, 10))
-    ax.set(title=f'{interval=} ms',
+    ax.set(title=f'{settings.format_interval(interval)} ms',
            xlabel='bootstrapped sample size',
            ylabel='bootstrapped trials per participant' if i==0 else '')
     legend_handles = [Line2D([], [], color=col, linewidth=lw,

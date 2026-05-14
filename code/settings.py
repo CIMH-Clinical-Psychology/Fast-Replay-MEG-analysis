@@ -147,6 +147,19 @@ else:
 os.environ['JOBLIB_CACHE_DIR'] = cache_dir
 
 #%% constants
+def format_interval(interval):
+    """takes various formats of interval as input and outputs streamlined
+    with offset taken into account (the time image has been shown)
+
+    input example: 32, 0.032, '32', '32 ms', '32 ms'
+    output: '132 ms'
+    """
+    if isinstance(interval, str):
+        interval = float(interval.lower().replace('ms', '').strip())
+    interval = float(interval)
+    if interval < 10:  # seconds → ms
+        interval *= 1000
+    return f'{int(round(interval)) + 100}'
 
 intervals_MEG = [32, 64, 128, 512]
 intervals_3T = [32, 64, 128, 512, 2048]

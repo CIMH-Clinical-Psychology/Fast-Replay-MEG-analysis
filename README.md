@@ -16,8 +16,6 @@ We download a subsection of the data from Wittkhn et al 2021. We will not reprod
 
 ### Preprocessing
 
-
-
 Assumption: You have downloaded the BIDS dataset to your local machine.
 
 In the `Makefile`, change the `BIDS_ROOT` to the directory where you cloned the BIDS directory to. Then call the following commands
@@ -31,6 +29,10 @@ make preprocessing # start the preprocessing, takes several hours
 # on a SLURM cluster. Edit run_preprocessing.sbatch and then 
 # instead of the preprocessing command run 
 make preprocessing_slurm
+
+# after analysis is done, remove intermediate .fif files,
+# the venv and the pipeline cache to free up disk space
+make preprocessing-cleanup
 ```
 
 If there are no errors, you're preprocessed files should be ready and you can start the analysis.

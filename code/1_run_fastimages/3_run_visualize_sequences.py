@@ -8,6 +8,7 @@ fast sequences trials, i.e. sequence item 1-5
 
 @author: simon.kern
 """
+import sys; sys.path.append('..')
 import mne
 from tqdm import tqdm
 import pandas as pd
@@ -26,8 +27,9 @@ plt.rc('axes', labelsize=12)     # x and y labels
 plt.rc('xtick', labelsize=11)    # x tick labels
 plt.rc('ytick', labelsize=11)    # y tick labels
 plt.rc('legend', fontsize=11)    # legend
+sns.set_context('paper', font_scale=1.5)
 # ---- load data -----
-stop
+
 
 #%% load 3T full sequences probability
 subjects = [f'{i:02d}' for i in range(1, 41)]
@@ -176,7 +178,7 @@ for i, interval in enumerate(df.interval.unique()):
     for ax in axs:
         ax.set_xticks(np.arange(0, 3000, 500), np.arange(0, 3000, 500)/1000)
         ax.set_xlabel('timepoint (s)')
-    ax.set_title(f'{int(interval)} ms')
+    ax.set_title(f'{settings.format_interval(interval)} ms')
     plt.pause(0.1)
 
 fig.legend(
@@ -244,17 +246,18 @@ for i, (isi, df_iti) in enumerate(df_meg.groupby('interval')):
     # plot lines for individual image onset
     for pos in range(5):
         ax.axvline(pos * (100+isi),  linewidth=0.5, color='black', alpha=0.3)
-    ax.set_xlabel('TR after stim onset')
+    ax.set_xlabel('ms after stim onset')
     ax.set_ylim([0.5, 2.3])
-    ax.set_ylabel('' if i>0 else 'normalized probability')
+    ax.set_ylabel('' if i>0 else 'normed probability')
+    ax.set_xticks(np.arange(0, 2000, 500), minor=True)
 
     # for ax in axs.flat:
     #     ax.set_xticks(np.arange(0, 3000, 500), np.arange(0, 3000, 500)/1000)
-    ax.set_title(f'ISI {int(isi)} ms')
-axs[0, 0].annotate(f'MEG', xy=(0, 0.5), xycoords='axes fraction',
-                xytext=(-0.3, 0.5), textcoords='axes fraction',
-                fontsize=12, fontweight='bold', rotation=90,
-                va='center', ha='center', annotation_clip=False)
+    ax.set_title(f'{settings.format_interval(isi)} ms')
+# axs[0, 0].annotate(f'MEG', xy=(0, 0.5), xycoords='axes fraction',
+#                 xytext=(-0.3, 0.5), textcoords='axes fraction',
+#                 fontsize=12, fontweight='bold', rotation=90,
+#                 va='center', ha='center', annotation_clip=False)
 
 
 for i, (isi, df_iti) in enumerate(df_3T.groupby('tITI')):
@@ -272,16 +275,17 @@ for i, (isi, df_iti) in enumerate(df_3T.groupby('tITI')):
         ax.axvline(t_onset, linewidth=0.5, color='black', alpha=0.3)
 
     ax.set_xticks(np.arange(1, 14, 2))
-    ax.set_xlabel('ms after stim onset')
-    ax.set_ylabel('' if i>0 else 'normalized probability')
-    ax.set_title(f'ISI {int((float(isi)*1000))} ms')
+    ax.set_xticks(np.arange(1, 14), minor=True)
+    ax.set_xlabel('TR after stim onset')
+    ax.set_ylabel('' if i>0 else 'normed probability')
+    ax.set_title(f'{settings.format_interval(isi)} ms')
     plt.pause(0.1)
 
 
-axs[1, 0].annotate(f'fMRI', xy=(0, 0.5), xycoords='axes fraction',
-                xytext=(-0.3, 0.5), textcoords='axes fraction',
-                fontsize=12, fontweight='bold', rotation=90,
-                va='center', ha='center', annotation_clip=False)
+# axs[1, 0].annotate(f'fMRI', xy=(0, 0.5), xycoords='axes fraction',
+#                 xytext=(-0.3, 0.5), textcoords='axes fraction',
+#                 fontsize=12, fontweight='bold', rotation=90,
+#                 va='center', ha='center', annotation_clip=False)
 
 
 plotting.normalize_lims(axs[0, :])
@@ -314,14 +318,14 @@ plotting.savefig(fig, settings.plot_dir + f'/figures/fast_sequences_probabilitie
 #%% standalone legend figure for manual insertion into another graphic
 from matplotlib.lines import Line2D
 
-labels = ['Probability Image 1', 'Probability Image 2',
-          'Probability Image 3', 'Probability Image 4', 'Probability Image 5',
+labels = ['Image 1', 'Image 2',
+          'Image 3', 'Image 4', 'Image 5',
           'Image onsets']
 handles = [Line2D([0], [0], color=c, linewidth=2) for c in settings.palette_wittkuhn1]
 handles.append(Line2D([0], [0], color='gray', linewidth=1, alpha=0.5))
 
-fig_leg = plt.figure(figsize=(3, 3))
-fig_leg.legend(handles, labels, ncol=1, loc='center', frameon=False,
-               title='Item position')
+fig_leg = plt.figure(figsize=(10, 3))
+fig_leg.legend(handles, labels, ncol=6, loc='center', frameon=False,
+               title='Serial position')
 savefig(fig_leg, settings.plot_dir + '/figures/legend_sequences.png',
                 bbox_inches='tight', dpi=300, transparent=True)

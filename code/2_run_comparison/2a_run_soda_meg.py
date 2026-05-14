@@ -8,6 +8,7 @@ Code to run SODA (Slope Order Dynamic Analysis) on MEG data
 """
 
 import mne
+import joblib
 from tqdm import tqdm
 import pandas as pd
 import bids_utils
@@ -22,14 +23,30 @@ from meg_utils import sigproc
 from meg_utils.plotting import savefig, normalize_lims
 from meg_utils.decoding import LogisticRegressionOvaNegX
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
+from mne_bids import BIDSPath
 import soda
 
 #%% settings
 normalization = 'lambda x: x/x.mean(0)'
 intervals = [32, 64, 128, 512]
+# plt.rc('font', size=14)          # default text
+# plt.rc('axes', titlesize=16)     # axes title
+# plt.rc('axes', labelsize=12)     # x and y labels
+# plt.rc('xtick', labelsize=11)    # x tick labels
+# plt.rc('ytick', labelsize=11)    # y tick labels
+# plt.rc('legend', fontsize=11)    # legend
+sns.set_context('paper', font_scale=1.5)
+
+bids_base = BIDSPath(
+    root=layout.derivatives['derivatives'].root,
+    datatype='results',
+    subject='group',
+    task='main',
+    check=False
+)
+pkl_soda = str(bids_base.copy().update(processing='soda', suffix='slopes', extension='.pkl.gz'))
 
 
-stop
 #%% SODA on raw trials
 
 
@@ -95,12 +112,22 @@ for subject in tqdm(layout.subjects):
         # ax.vlines(np.arange(5)* (100+interval), *ax.get_ylim(), linewidth=0.5,
         #           color='black', alpha=0.3, label='image onset')
         # sns.lineplot(df_isi, x='timepoint', y='slope', ax=ax, label='slope')
-        # ax.set(title=f'{interval=} ms')
+        # ax.set(title=f'{settings.format_interval(interval)} ms')
 
     # fig.suptitle(f'{subject=}')
     # savefig(fig, settings.plot_dir + f'/soda_meg/{subject}_{interval}.png')
 
+bids_base.mkdir(True)
+joblib.dump({'df_meg': df_meg, 'df': df, 'lengths': lengths}, pkl_soda)
+
 #%% plotting
+sns.set_context('paper', font_scale=2)
+
+res = joblib.load(pkl_soda)
+df_meg = res['df_meg']
+df = res['df']
+lengths = res['lengths']
+
 lengths = np.unique(lengths)
 sizes = [np.round(int(((iv/10) + 10))/4).astype(int) for iv in lengths]
 mosaic = ''.join([f'{i}'*l for i, l in enumerate (sizes)])
@@ -111,7 +138,7 @@ fig, axs = plt.subplot_mosaic(mosaic, figsize=[22, 7], dpi=80)
 for i, (interval, df_isi) in enumerate(df_meg.groupby('interval')):
     ax = list(axs.values())[i]
     ax.clear()
-    ax.set(title=f'{interval} ms')
+    ax.set(title=f'{settings.format_interval(interval)} ms')
     length = lengths[i]
     df_isi = df_isi.groupby(['timepoint', 'subject', 'position']).mean().reset_index()
     df_isi = df_isi[df_isi.timepoint<length*10]
@@ -120,13 +147,13 @@ for i, (interval, df_isi) in enumerate(df_meg.groupby('interval')):
     ax.vlines(np.arange(5)* (100+interval), *ax.get_ylim(),
               linewidth=1, color='black', alpha=0.3, label='image onset')
     ax.get_legend().remove()
-    ax.set_ylabel('' if i>0 else 'probability (normalized)')
+    ax.set_ylabel('' if i>0 else 'normed probability')
 
 for i, (interval, df_isi) in enumerate(df.groupby('interval')):
     ax = list(axs.values())[i+4]
     ax.clear()
     ax.axhline(0, linestyle='--', alpha=0.3, c='black')
-    ax.set(title='')#f'{interval} ms')
+    ax.set(title='')#f'{settings.format_interval(interval)} ms')
     df_isi = df_isi.groupby(['timepoint', 'subject']).mean()
     sns.lineplot(df_isi, x='timepoint', y='slope', ax=ax, label='slope')
     ax.vlines(np.arange(5)* (100+interval), *ax.get_ylim(),
@@ -162,9 +189,9 @@ leg1_bbox = leg1.get_window_extent().transformed(fig.transFigure.inverted())
 fig.legend(lower_handles, lower_labels, ncol=2,
            loc='upper right', bbox_to_anchor=(0.99, leg1_bbox.y0), frameon=True)
 
-fig.suptitle(f'SODA on MEG', x=0.5, y=1.01)
+# fig.suptitle(f'SODA on MEG', x=0.5, y=1.01)
 fig.tight_layout(rect=[0, 0, 1, 0.96])
-savefig(fig, settings.plot_dir + f'/soda_meg/soda_on_meg.png', tight=False)
+savefig(fig, settings.plot_dir + f'/figures/soda_on_meg.png', tight=False)
 
 
 #%% SODA with gaussian smooth
@@ -247,7 +274,7 @@ for subject in tqdm(layout.subjects):
         # ax.vlines(np.arange(5)* (100+interval), *ax.get_ylim(), linewidth=0.5,
         #           color='black', alpha=0.3, label='image onset')
         # sns.lineplot(df_isi, x='timepoint', y='slope', ax=ax, label='slope')
-        # ax.set(title=f'{interval=} ms')
+        # ax.set(title=f'{settings.format_interval(interval)} ms')
 
     # fig.suptitle(f'{subject=}')
     # savefig(fig, settings.plot_dir + f'/soda_meg/{subject}_{interval}.png')
@@ -256,7 +283,7 @@ for subject in tqdm(layout.subjects):
 for i, (interval, df_isi) in enumerate(df.groupby('interval')):
     ax = axs.flat[i]
     ax.clear()
-    ax.set(title=f'{interval=} ms')
+    ax.set(title=f'{settings.format_interval(interval)} ms')
     df_isi = df_isi.groupby(['timepoint', 'subject']).mean()
     sns.lineplot(df_isi, x='timepoint', y='slope', ax=ax, label='slope')
     ax.vlines(np.arange(5)* (100+interval), *ax.get_ylim(),

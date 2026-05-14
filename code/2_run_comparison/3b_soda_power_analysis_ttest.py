@@ -150,7 +150,7 @@ for j, period in enumerate(['fwd', 'bkw']):
                           (df_power.period == period)]
 
         if len(df_sel) == 0:
-            ax.set_title(f'{interval=} ms, {period}\n(no data)')
+            ax.set_title(f'{settings.format_interval(interval)} ms, {period}\n(no data)')
             continue
 
         df_pivot = df_sel.pivot_table(index='n_trials', columns='n_samples',
@@ -164,7 +164,7 @@ for j, period in enumerate(['fwd', 'bkw']):
             ax.contour(X, Y, Z, levels=[lvl], colors=[col], linewidths=lw)
 
         ax.set_xticks(np.arange(0, 80, 10))
-        ax.set(title=f'{interval=} ms, {period}',
+        ax.set(title=f'{settings.format_interval(interval)} ms, {period}',
                xlabel='bootstrapped sample size',
                ylabel='bootstrapped trials per participant' if i == 0 else '')
         legend_handles = [Line2D([], [], color=col, linewidth=lw,

@@ -15,6 +15,7 @@ from bids import BIDSLayout
 import numpy as np
 import pandas as pd
 import mne
+import seaborn as sns
 from meg_utils import decoding, plotting, sigproc
 import tdlm
 import matplotlib.pyplot as plt
@@ -24,6 +25,7 @@ from meg_utils import misc
 #%% settings
 subjects = [f'{i:02d}' for i in range(1, 41)]
 normalization = 'lambda x: x/x.mean(0)'
+sns.set_context('paper', font_scale=1.5)
 
 layout = BIDSLayout(settings.bids_dir_3T)
 
@@ -78,11 +80,11 @@ for i, interval in enumerate(sorted(plot_intervals)):
                            ax=ax, clear=False, plot95=False,
                            plotmax=i==0)
 
-ax.set_title('32 to 512 ms condition')
+ax.set_title('132 to 612 ms condition')
 from matplotlib.lines import Line2D
 legend_handles = [Line2D([0], [0], color=settings.palette_wittkuhn2[i], lw=2)
                   for i in range(len(plot_intervals))]
-ax.legend(legend_handles, [f'{int(float(x)*1000)} ms' for x in sorted(plot_intervals)],  loc='lower left')
+ax.legend(legend_handles, [f'{settings.format_interval(x)} ms' for x in sorted(plot_intervals)],  loc='lower left')
 ax.set_xticks(xticks, xticklabels)
 ax.axhline(0, linestyle='--', c='gray', alpha=0.3)
 ax.set_xlabel('time lag (s)')
@@ -124,10 +126,10 @@ tdlm.plot_sequenceness(sf_single[interval], sb_single[interval],
 #                        ax=axs[2], clear=False, plot95=False, plotmax=1)
 
 for ax, title, sx in zip(axs[1:2],
-                         ['2048 ms condition', 'averaged trials\n2048 ms condition'],
+                         ['2148 ms condition', 'averaged trials\n2148 ms condition'],
                          [sf_single['2.048'], sf['2.048']]):
     ax.set_title(title)
-    ax.legend(['2048 ms'], title='interval (ms)')
+    ax.legend(['2148 ms'], title='interval (ms)')
     ax.set_xticks(xticks, xticklabels)
     ax.set_xlabel('time lag (s)')
     ax.axhline(0, linestyle='--', c='gray', alpha=0.3)
@@ -159,7 +161,7 @@ for ax, title, sx in zip(axs[1:2],
 
 axs[0].set_ylabel('forward sequenceness')
 axs[1].set_ylabel('forward sequenceness')
-fig.suptitle('TDLM on fMRI')
+# fig.suptitle('TDLM on fMRI')
 
 
 by_label = {}

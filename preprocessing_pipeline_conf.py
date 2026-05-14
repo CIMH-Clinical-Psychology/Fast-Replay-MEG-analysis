@@ -45,7 +45,7 @@ exclude_runs: Optional[dict[str, list[str]]] = None  # No excluded runs
 subjects: Sequence[str] | Literal["all"] = "all"  # Analyze all subjects
 
 # exclude_subjects: Sequence[str] = ['23']  # No excluded subjects
-process_empty_room: bool = True  # Preprocess empty-room data
+process_empty_room: bool = False  # Preprocess empty-room data
 process_rest: bool = True  # Preprocess resting-state data
 ch_types: Sequence[Literal["meg"]] = ["meg"]  # Include MEG and EEG channels
 data_type: Literal["meg", "eeg"] = "meg"  # Data type is MEG
@@ -62,7 +62,7 @@ rest_epochs_duration = 2
 rest_epochs_overlap = 0
 epochs_tmin = 0
 
-on_error  = 'debug'
+# on_error  = 'raise'
 baseline = None
 
 # %%
