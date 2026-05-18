@@ -4,7 +4,7 @@ FASTIMAGES - a benchmark for sequence replay detection methods in human neuroima
 
 ### Overview
 
-We let 70 participants (30 MEG / 40 fMRI) view fast sequences of five images in four different speeds (32/64/128/512 ms interval). Together with a functional localizer, this data can be used to test sequence detection algorithms under realistic conditions. 
+We let 70 participants (30 MEG / 40 fMRI) view [fast sequences of five images](https://github.com/user-attachments/assets/b7301d15-ccd7-4406-918b-016d4c8b6894) in four different speeds (32/64/128/512 ms interval). Together with a functional localizer, this data can be used to test sequence detection algorithms under realistic conditions. 
 
 The repository contains two things:
 
@@ -12,7 +12,7 @@ The repository contains two things:
 
 2) All code to reproduce the publication "FASTIMAGES: Validating replay detection methods in human neuroimaging using a combined MEG and fMRI dataset" (/code)
 
-### Quickstart
+## Quickstart
 
 If you're just interested to benchmark your sequence detection algorithm against real neural sequences of known order, we got you covered. 
 
@@ -31,7 +31,7 @@ If you're just interested to benchmark your sequence detection algorithm against
 
 If you want to train your own classifiers or tinker with the data some more, you need to fetch the BIDS dataset for fMRI and MEG (see below).
 
-### Prequesists
+## Prequesists
 
 To run the full pipeline to recreate the publication FASTIMAGES you need to
 
@@ -49,7 +49,7 @@ To run the full pipeline to recreate the publication FASTIMAGES you need to
    
    
 
-### Prepare 3T fMRI data
+## Prepare 3T fMRI data
 
 We download a subsection of the data from Wittkhn et al 2021. We will not reproduce the entire results but instead use their precomputed results. For this we need the following commands.
 
@@ -57,7 +57,7 @@ We download a subsection of the data from Wittkhn et al 2021. We will not reprod
 
 2. clone the highspeed-analysis dir `datalad clone https://gin.g-node.org/lnnrtwttkhn/highspeed-analysis`
 
-### Preprocessing
+## Preprocessing
 
 Assumption: You have downloaded the BIDS dataset to your local machine.
 
