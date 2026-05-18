@@ -1,8 +1,6 @@
 # Trial-level sequence predictions
 
-Per-trial classifier probabilities for the **fast-sequence trials** of the
-Highspeed dataset (Wittkuhn & Schuck 2021,[Nature Communications](https://www.nature.com/articles/s41467-021-21970-2)) plus new MEG dataset
-exported from both modalities:
+Per-trial classifier probabilities for the **fast-sequence trials** of the FASTIMAGES benchmark dataset:
 
 - **MEG** — 30 subjects, 4 inter-stimulus intervals (32, 64, 128, 512 ms),
   100 Hz time axis, 5 image classes.
