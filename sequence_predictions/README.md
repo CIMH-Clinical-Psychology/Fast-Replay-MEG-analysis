@@ -15,7 +15,7 @@ dataset). The per-trial probability matrix and the corresponding stimulus
 order are all you need to reproduce sequence-detection analyses such as
 **TDLM** or **SODA**.
 
-Examples for loading the data with Python, R, Julia, MATLAB are blow
+Examples for loading the data with Python, R, Julia, MATLAB are below.
 
 ## Layout
 
