@@ -122,7 +122,7 @@ def tsv2events(df_events, sfreq=100):
 @mem.cache
 def load_behaviour(subject, **filters):
     """
-    Load and filter a behavioral BIDS file for a given subject.
+    Load and filter a behavioral MEG BIDS file for a given subject.
 
     This function retrieves a behavioral data file in BIDS format for a specified subject,
     loads it into a pandas DataFrame, and applies column-based filters to the data.
@@ -217,7 +217,7 @@ def load_decoding_3T(subject, **filters):
     """
     subject = _norm_subj(subject)
 
-    filename = f'{settings.bids_dir_3T_decoding}/decoding/sub-{subject}/data/sub-{subject}_decoding.csv'
+    filename = f'{settings.bids_dir_3T}/sub-{subject}/data/sub-{subject}_decoding.csv.gz'
     df_proba = pd.read_csv(filename, low_memory=False)
 
     # apply filter on columns

@@ -1,99 +1,122 @@
 # FASTIMAGES - benchmark
 
-FASTIMAGES - a benchmark for sequence replay detection methods in human neuroimaging using MEG and fMRI recordings. 
-
+FASTIMAGES - a benchmark for sequence replay detection methods in human neuroimaging using MEG and fMRI recordings.
 
 ### Overview
 
-We let 70 participants (30 MEG / 40 fMRI) view [fast sequences of five images](https://github.com/user-attachments/assets/b7301d15-ccd7-4406-918b-016d4c8b6894) in four different speeds (32/64/128/512 ms interval). Together with a functional localizer, this data can be used to test sequence detection algorithms under realistic conditions. 
+We let 70 participants (30 MEG / 40 fMRI) view [fast sequences of five images](https://github.com/user-attachments/assets/b7301d15-ccd7-4406-918b-016d4c8b6894) in four different speeds (32/64/128/512 ms interval). Together with a functional localizer, this data can be used to test sequence detection algorithms under realistic conditions.
 
 The repository contains two things:
 
-1) Probability time series and examples for benchmarking sequence detection algorithms (`/examples` and `/sequence_predictions`)
-
-2) All code to reproduce the publication "FASTIMAGES: Validating replay detection methods in human neuroimaging using a combined MEG and fMRI dataset" (`/code`)
-
+1. Simple per-trial probability time series and examples for benchmarking sequence-detection algorithms (`/examples` and `/sequence_predictions`).
+2. The full code to reproduce the publication *"FASTIMAGES: Validating replay detection methods in human neuroimaging using a combined MEG and fMRI dataset"* (`/code`).
 
 <video src="https://github.com/user-attachments/assets/b7301d15-ccd7-4406-918b-016d4c8b6894" controls="controls" width="200">
 </video>
 
-## Quickstart
+## Quickstart — benchmarking your method
 
-If you're just interested to benchmark your sequence detection algorithm against real neural sequences of known order, we got you covered. 
+If you just want to test your sequence-detection algorithm against real neural sequences of known order, you do **not** need to download any BIDS data. The repository already ships the per-trial classifier probabilities as HDF5 files under [`sequence_predictions/`](sequence_predictions/).
 
-1. Clone the repository via `git clone https://github.com/CIMH-Clinical-Psychology/FASTIMAGES-benchmark`
+```bash
+git clone https://github.com/CIMH-Clinical-Psychology/FASTIMAGES-benchmark
+cd FASTIMAGES-benchmark
+pip install h5py numpy pandas matplotlib seaborn      # core deps
+pip install tdlm soda                                 # only if you run the TDLM/SODA example
+```
 
-2. Install dependencies via `pip install -r requirements_noversions.txt`
+Then look at the two stand-alone scripts in [`examples/`](examples/):
 
-3. Per participant, we provide probability time series per trial, decoding the five image categories stored at `/sequence_predictions`. Stand-alone scripts that work directly from the HDF5 files without importing are here:
-   
-   1. `examples/visualize_sequences.py` — recreates the per-position probability
-      plot from `code/1_run_fastimages/3_run_visualize_sequences.py` for both
-      modalities.
-   
-   2. `examples/run_tdlm_soda.py` — runs **TDLM** on the MEG data and **SODA** on
-      the fMRI data and plots the resulting group-level curves. Requires the `tdlm` and `soda` Python packages.
+- [`examples/visualize_sequences.py`](examples/visualize_sequences.py) — recreates the per-position probability plot for MEG and fMRI directly from the HDF5 files.
+- [`examples/run_tdlm_soda.py`](examples/run_tdlm_soda.py) — runs **TDLM** on the MEG probabilities and **SODA** on the fMRI probabilities and plots the group-level curves.
 
-If you want to train your own classifiers or tinker with the data some more, you need to fetch the BIDS dataset for fMRI and MEG (see below).
+The HDF5 schema (probability arrays, sequence labels, file attributes, plus load snippets for Python / R / MATLAB / Julia) is documented in [`sequence_predictions/README.md`](sequence_predictions/README.md).
 
-## Prequesists
+## Reproduce FASTIMAGES
 
-To run the full pipeline to recreate the publication FASTIMAGES you need to
+The steps below regenerate the figures and the published probabilities from raw data.
 
-1. Clone the FASTIMAGES repository `git clone https://github.com/CIMH-Clinical-Psychology/FASTIMAGES-benchmark`
+### Prerequisites
 
-2. Install dependencies `pip install -r requirements.txt` (preferably in a new venv or conda env)
+- **Python** ≥ 3.10 (Linux/macOS; Windows works for the analysis but not the preprocessing pipeline).
+- **git** to clone this repository.
+- A client to fetch the BIDS datasets: either [GIN](https://gin.g-node.org/G-Node/gin-cli-releases) (recommended) or [DataLad](https://www.datalad.org/) (works because GIN is git-annex under the hood).
+- **Disk space**: ~205 GB for the MEG BIDS dataset and ~20 GB for the 3T fMRI BIDS dataset (more if you also pull the raw NIfTIs).
+- **Optional**: SLURM cluster access for parallel power analyses (`code/2_run_comparison/3_submit_power_analysis.sh`).
 
-3. Download the MEG BIDS dataset from https://gin.g-node.org/skjerns/highspeed-MEG-bids, see instructions there how to do that.
+### Setup
 
-4. Download the 3T fMRI BIDS dataset from xxx
+1. **Clone this repository and initialise the submodule** (`meg_utils` is a git submodule shared with other projects):
 
-5. Download the 3T fMRI decoding BIDS from xxx
+   ```bash
+   git clone https://github.com/CIMH-Clinical-Psychology/FASTIMAGES-benchmark
+   cd FASTIMAGES-benchmark
+   git submodule update --init --recursive
+   ```
 
-6. Put the paths where you stored the files in `setting.py`
-   
-   
+   (Or in one shot: `git clone --recurse-submodules <url>`.)
 
-## Prepare 3T fMRI data
+2. **Install Python dependencies** into a fresh environment:
 
-We download a subsection of the data from Wittkhn et al 2021. We will not reproduce the entire results but instead use their precomputed results. For this we need the following commands.
+   ```bash
+   python -m venv .venv && source .venv/bin/activate
+   pip install -r requirements.txt
+   ```
 
-1. Go to the directory where you want to store the data. You'll need X GB free space.
+   If you also want to run the example scripts that depend on third-party algorithms, install them too:
 
-2. clone the highspeed-analysis dir `datalad clone https://gin.g-node.org/lnnrtwttkhn/highspeed-analysis`
+   ```bash
+   pip install tdlm soda
+   ```
+
+3. **Download the MEG BIDS dataset** (~205 GB; includes preprocessed `derivatives/`):
+
+   ```bash
+   gin get skjerns/FASTIMAGES-MEG-bids
+   ```
+
+   See the [FASTIMAGES-MEG-bids README](https://gin.g-node.org/skjerns/FASTIMAGES-MEG-bids) for alternatives (DataLad, selective download) and for re-running the preprocessing.
+
+4. **Download the combined 3T fMRI BIDS + decoding dataset** (`FASTIMAGES-3T-bids`):
+
+   ```bash
+   gin get skjerns/FASTIMAGES-3T-bids   # TODO: replace once published
+   ```
+
+   This single tree contains the BIDS events/anatomy/functional files together with the per-subject decoding CSVs (no separate `highspeed-decoding` repo is needed any more).
+
+   > **Note:** `FASTIMAGES-3T-bids` is a *compressed* repackaging that drops the original 4D BOLD NIfTIs — the full analysis here only needs the events files plus the precomputed decoding probabilities, so the raw functional volumes are not shipped. If you want them (e.g. to retrain your own decoders or rerun fMRIPrep), grab the originals from Wittkuhn & Schuck 2021: [`lnnrtwttkhn/highspeed-bids`](https://gin.g-node.org/lnnrtwttkhn/highspeed-bids) for the raw BIDS data and [`lnnrtwttkhn/highspeed-decoding`](https://gin.g-node.org/lnnrtwttkhn/highspeed-decoding) for their decoding outputs.
+
+5. **Configure paths.** Open `code/settings.py` and set `bids_dir_meg` and `bids_dir_3T` to wherever you put the two datasets. Per-machine branches are supported; pick one that matches your `getpass.getuser()` / `platform.node()` or add your own.
+
+### Run the analysis
+
+The analysis is two phases, run in order from inside the relevant subfolder.
+
+**Phase 1 — train decoders and apply them to the fast-sequence MEG trials** (`code/1_run_fastimages/`):
+
+```bash
+python 1a_run_best_l1_meg.py             # L1 gridsearch on localizer trials
+python 1c_train_localizer_meg.py         # train final classifiers with best L1
+python 2_run_analysis_fast_images.py     # aggregate MEG accuracies vs fMRI
+```
+
+**Phase 2 — run TDLM/SODA on both modalities and compare** (`code/2_run_comparison/`):
+
+```bash
+python ../scripts/0_extract_trial_probas.py   # (re)build sequence_predictions/*.h5
+python 1a_run_tdlm_meg.py                     # TDLM on MEG
+python 1b_run_soda_fmri.py                    # SODA on fMRI
+python 2b_run_tdlm_fmri.py                    # TDLM on fMRI (cross-method)
+python 4_compare_tdlm_soda.py                 # side-by-side effect-size comparison
+```
+
+For the power analyses (3a_*/3b_*), submit the SLURM array jobs:
+
+```bash
+bash 3_submit_power_analysis.sh
+```
 
 ## Preprocessing
 
-Assumption: You have downloaded the BIDS dataset to your local machine.
-
-In the `Makefile`, change the `BIDS_ROOT` to the directory where you cloned the BIDS directory to. Then call the following commands
-
-```shell
-make install       # install venv and mne_bids_pipeline
-make init          # initialize the derivatives dir
-make preprocessing # start the preprocessing, takes several hours
-
-# alternatively, you can process participants in parallel 
-# on a SLURM cluster. Edit run_preprocessing.sbatch and then 
-# instead of the preprocessing command run 
-make preprocessing_slurm
-
-# after analysis is done, remove intermediate .fif files,
-# the venv and the pipeline cache to free up disk space
-make preprocessing-cleanup
-```
-
-If there are no errors, you're preprocessed files should be ready and you can start the analysis.
-
-## Analysis
-
-The analysis can be run with running the scripts in the following order:
-
-```
-run_decoding.py
-run_analysis_fast_images.py
-```
-
-# 
-
-
+Preprocessed `.fif` files are already shipped inside the MEG BIDS dataset (`/derivatives`). If you want to regenerate them yourself, the pipeline lives next to the data — see the **Preprocessing** section of the [FASTIMAGES-MEG-bids README](https://gin.g-node.org/skjerns/FASTIMAGES-MEG-bids) (`make install-preprocessing && make preprocessing`, or `make preprocessing_slurm` on a SLURM cluster).

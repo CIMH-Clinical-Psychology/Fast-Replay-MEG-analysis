@@ -9,23 +9,15 @@ directories, caching dirs, output dirs etc, as well as other constants
 @author: simon.kern
 """
 import os
-import sys
 import warnings
 import getpass
 import platform
 import time
-import psutil
-import logging
 from bids import BIDSLayout  # pip install pybids
 import seaborn as sns
 
 # this variable can be set to suppress preloading of the BIDS data
-NO_PRELOADING = os.environ.get('NO_PRELOADING')
-
-###############################
-#%%userconf
-# USER-SPECIFIC CONFIGURATION
-###############################
+NO_PRELOADING = os.environ.get('NO_PRELOADING')  # set this to prevent BIDS init
 username = getpass.getuser().lower()  # your login name
 host     = platform.node().lower()    # the name of this computer
 system   = platform.system().lower()  # linux, windows or mac.
@@ -33,47 +25,58 @@ home = os.path.expanduser('~')
 cwd = os.path.abspath(os.getcwd())
 script_dir = os.path.dirname(__file__)
 
-# the following directories are needed:
+###############################
+#%%userconf
+# FOLDER CONFIGURATION
+###############################
+
+
+# the following directories need to be defined:
 # cache_dir - temporary directory for caching and joblib
 # plot_dir  - where plots will be dumped
-# bids_dir_meg - directory of the MEG bids data
-# bids_dir_3T  - https://gin.g-node.org/lnnrtwttkhn/highspeed-bids
-# bids_dir_3T_decoding - https://gin.g-node.org/lnnrtwttkhn/highspeed-decoding
+# bids_dir_meg - directory of the MEG bids data g (see FASTIMAGES-MEG-bids)
+# bids_dir_3T  - combined fMRI BIDS + decoding (see FASTIMAGES-3T-bids)
 
-# machine specific configuration overwrites general directory structure
+
+cache_dir = './tmp/'  # temporary cache directory for joblib
+bids_dir_meg = '/path/to/FASTIMAGES-MEG-bids' # data from https://gin.g-node.org/skjerns/FASTIMAGES-MEG-bids
+bids_dir_3T = '/path/to/FASTIMAGES-3T-bids'   # data from https://gin.g-node.org/skjerns/FASTIMAGES-3T-bids
+plot_dir = f'{script_dir}/../plots/'  # where to save plots
+
+#%%
+###########################################
+# MACHINE-SPECIFIC CONFIGURATION (optional)
+###########################################
+
+# if you are working on different machines, you might want to use a
+# machine-specific configuration that overwrites general directory structure
+# else just leave the below cell as you want
 if username == 'simon.kern' and '.zi.local' in host:  # VM or cluster
     cache_dir = f'{home}/Desktop/highspeed-joblib/'
-    bids_dir_meg = '/zi/flstorage/group_klips/data/data/Simon/highspeed/highspeed-MEG-bids/'
-    bids_dir_3T = '/zi/flstorage/group_klips/data/data/Simon/highspeed/highspeed-3T-bids/'
-    bids_dir_3T_decoding = '/zi/flstorage/group_klips/data/data/Simon/highspeed/highspeed-3T-decoding/'
+    bids_dir_meg = '/data/highspeed/FASTIMAGES-MEG-bids/'
+    bids_dir_3T = '/data/highspeed/FASTIMAGES-3T-bids/'
     plot_dir = f'{script_dir}/../plots/'
 
 elif username == 'simon.kern' and host=='5cd320lfh8':
     cache_dir = f'{home}/Desktop/joblib-fasterplay/'
     plot_dir = '../plots/'
-    bids_dir_meg = "W:/group_klips/data/data/Simon/highspeed/highspeed-MEG-bids"
-    bids_dir_3T = 'W:/group_klips/data/data/Simon/highspeed/highspeed-3T-bids/'
-    bids_dir_3T_decoding = 'w:/group_klips/data/data/Simon/highspeed/highspeed-3T-decoding/'
+    bids_dir_meg = "W:/group_klips/data/data/Simon/highspeed/FASTIMAGES-MEG-bids"
+    bids_dir_3T = 'W:/group_klips/data/data/Simon/highspeed/FASTIMAGES-3T-bids/'
     plot_dir = f'{script_dir}/../plots/'
 
 elif username=='simon' and host=='kubuntu':
     cache_dir = f'{home}/Desktop/joblib-fasterplay/'
-    # bids_dir_meg = "W:/group_klips/data/data/Simon/highspeed/highspeed-MEG-bids/"
-    bids_dir_3T = bids_dir = '/home/simon/Desktop/highspeed-bids/'
-    bids_dir_3T_decoding = '/home/simon/Desktop/highspeed-decoding/'
+    bids_dir_3T = '/home/simon/Desktop/FASTIMAGES-3T-bids/'
     plot_dir = f'{script_dir}/../plots/'
-else:
-    raise Exception(f'No user specific settings found in settings.py with {username=} and {host=}')
 
-#####################################
-# END OF USER-SPECIFIC CONFIGURATION
-#####################################
+#######################################
+# END OF MACHINE-SPECIFIC CONFIGURATION
+#######################################
 
-#%% convert to abspaths
+#%% convert dirs to abspaths
 
 cache_dir = os.path.abspath(cache_dir) + '/'
 plot_dir = os.path.abspath(plot_dir) + '/'
-bids_dir_3T_decoding = os.path.abspath(bids_dir_3T_decoding) + '/'
 
 os.makedirs(cache_dir, exist_ok=True)
 
@@ -83,12 +86,6 @@ if NO_PRELOADING:
     print('Not preloading MEG BIDS as NO_PRELOADING env var was set')
 elif 'bids_dir_meg' in locals():
     bids_dir_meg = os.path.abspath(bids_dir_meg)
-    # use database for faster loading. but recreate on each python startup
-    # db_path = cache_dir + '/bids_meg.db'
-    # python_start = psutil.Process(os.getpid()).create_time()
-    # reset_database = (os.path.getmtime(db_path) if os.path.exists(db_path) else 0) < python_start
-    # if reset_database:
-    #     warnings.warn('resetting MEG BIDS database')
     layout_MEG = BIDSLayout(bids_dir_meg, derivatives=True)
     layout_MEG.subjects_all = [x for x in layout_MEG.get_subjects() if (not x in ['emptyroom', 'group'])]
     layout_MEG.subjects = [x for x in layout_MEG.subjects_all]
@@ -128,25 +125,12 @@ else:
     layout_3T = None
     warnings.warn('bids_dir_3T has not been defined in settings.py')
 
-#%% BIDS decoding layout for 3T
-
-# is this a valid BIDS directory? does not seem to be recognized
-
-# if 'bids_dir_3T_decoding' in locals():
-#     layout_3T_decoding = BIDSLayout(bids_dir_3T_decoding + '/decoding')
-#     layout_3T_decoding.subjects = layout_3T_decoding.get_subjects()
-#     if not layout_3T_decoding.subjects:
-#         warnings.warn('No subjects in layout_3T, are you sure it exists?')
-# else:
-#     layout_3T_decoding = None
-#     warnings.warn('bids_dir_3T has not been defined in settings.py')
-
 
 #%% initializations, should need no change
 # set environment variable for `meg_utils`, where to cache function calls
 os.environ['JOBLIB_CACHE_DIR'] = cache_dir
 
-#%% constants
+#%% constants and helper functions
 def format_interval(interval):
     """takes various formats of interval as input and outputs streamlined
     with offset taken into account (the time image has been shown)

@@ -34,7 +34,6 @@ import bids_utils
 import settings
 from settings import normalization
 from settings import layout_3T as layout
-from settings import bids_dir_3T_decoding as layout_decoding
 from settings import subjects_3T as subjects
 from settings import intervals_3T as intervals
 
