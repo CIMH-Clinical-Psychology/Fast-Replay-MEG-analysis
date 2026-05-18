@@ -57,13 +57,6 @@ if username == 'simon.kern' and '.zi.local' in host:  # VM or cluster
     bids_dir_3T = '/data/highspeed/FASTIMAGES-3T-bids/'
     plot_dir = f'{script_dir}/../plots/'
 
-elif username == 'simon.kern' and host=='5cd320lfh8':
-    cache_dir = f'{home}/Desktop/joblib-fasterplay/'
-    plot_dir = '../plots/'
-    bids_dir_meg = "W:/group_klips/data/data/Simon/highspeed/FASTIMAGES-MEG-bids"
-    bids_dir_3T = 'W:/group_klips/data/data/Simon/highspeed/FASTIMAGES-3T-bids/'
-    plot_dir = f'{script_dir}/../plots/'
-
 elif username=='simon' and host=='kubuntu':
     cache_dir = f'{home}/Desktop/joblib-fasterplay/'
     bids_dir_3T = '/home/simon/Desktop/FASTIMAGES-3T-bids/'

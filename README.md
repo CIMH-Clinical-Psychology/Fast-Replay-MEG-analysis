@@ -42,7 +42,7 @@ The steps below regenerate the figures and the published probabilities from raw 
 - **Python** ≥ 3.10 (Linux/macOS; Windows works for the analysis but not the preprocessing pipeline).
 - **git** to clone this repository.
 - A client to fetch the BIDS datasets: either [GIN](https://gin.g-node.org/G-Node/gin-cli-releases) (recommended) or [DataLad](https://www.datalad.org/) (works because GIN is git-annex under the hood).
-- **Disk space**: ~205 GB for the MEG BIDS dataset and ~20 GB for the 3T fMRI BIDS dataset (more if you also pull the raw NIfTIs).
+- **Disk space**: ~205 GB for the MEG BIDS dataset and ~550 MB for the 3T fMRI BIDS dataset (much more if you also pull the original 4D BOLD NIfTIs from the upstream Wittkuhn repos — see step 4).
 - **Optional**: SLURM cluster access for parallel power analyses (`code/2_run_comparison/3_submit_power_analysis.sh`).
 
 ### Setup
@@ -79,13 +79,13 @@ The steps below regenerate the figures and the published probabilities from raw 
 
    See the [FASTIMAGES-MEG-bids README](https://gin.g-node.org/skjerns/FASTIMAGES-MEG-bids) for alternatives (DataLad, selective download) and for re-running the preprocessing.
 
-4. **Download the combined 3T fMRI BIDS + decoding dataset** (`FASTIMAGES-3T-bids`):
+4. **Download the combined 3T fMRI BIDS + decoding dataset** ([`FASTIMAGES-3T-bids`](https://gin.g-node.org/skjerns/FASTIMAGES-3T-bids), ~550 MB):
 
    ```bash
-   gin get skjerns/FASTIMAGES-3T-bids   # TODO: replace once published
+   gin get skjerns/FASTIMAGES-3T-bids
    ```
 
-   This single tree contains the BIDS events files together with the per-subject decoding CSVs (no separate `highspeed-decoding` repo is needed any more).
+   This single tree contains the BIDS events files together with the per-subject decoding CSVs (no separate `highspeed-decoding` repo is needed any more). See the [FASTIMAGES-3T-bids README](https://gin.g-node.org/skjerns/FASTIMAGES-3T-bids) for the DataLad alternative.
 
    > **Note:** `FASTIMAGES-3T-bids` is a *compressed* repackaging that drops the original 4D BOLD NIfTIs — the full analysis here only needs the events files plus the precomputed decoding probabilities, so the raw functional volumes are not shipped. If you want them (e.g. to retrain your own decoders or rerun fMRIPrep), grab the originals from Wittkuhn & Schuck 2021: [`lnnrtwttkhn/highspeed-bids`](https://gin.g-node.org/lnnrtwttkhn/highspeed-bids) for the raw BIDS data and [`lnnrtwttkhn/highspeed-decoding`](https://gin.g-node.org/lnnrtwttkhn/highspeed-decoding) for their decoding outputs. You'll need this to train your own decoders.
 
@@ -108,6 +108,8 @@ python 2_run_analysis_fast_images.py     # aggregate MEG accuracies vs fMRI
 python 3_run_visualize_sequences.py      # per-position probability traces
 ```
 
+> **Note:** Phase 2 reads pickled intermediate outputs produced by Phase 1, so Phase 1 must have been run end-to-end (for the same `bids_dir_meg`) before Phase 2 will work.
+
 **Phase 2 — run TDLM / SODA on both modalities and compare** (`code/2_run_comparison/`):
 
 ```bash
@@ -129,3 +131,11 @@ python 4_compare_tdlm_soda.py                 # side-by-side effect-size compari
 ## Preprocessing
 
 Preprocessed `.fif` files are already shipped inside the MEG BIDS dataset (`/derivatives`). If you want to regenerate them yourself, the pipeline lives next to the data — see the **Preprocessing** section of the [FASTIMAGES-MEG-bids README](https://gin.g-node.org/skjerns/FASTIMAGES-MEG-bids) (`make install-preprocessing && make preprocessing`, or `make preprocessing_slurm` on a SLURM cluster).
+
+## Issues & contact
+
+Bugs, questions or feature requests → please open an [issue on GitHub](https://github.com/CIMH-Clinical-Psychology/FASTIMAGES-benchmark/issues).
+
+## License
+
+This repository (code and documentation) is released under the [GNU GPL v3](LICENSE). The bundled probability files in [`sequence_predictions/`](sequence_predictions/) and the upstream BIDS datasets ([`FASTIMAGES-MEG-bids`](https://gin.g-node.org/skjerns/FASTIMAGES-MEG-bids), [`FASTIMAGES-3T-bids`](https://gin.g-node.org/skjerns/FASTIMAGES-3T-bids)) are distributed under Creative Commons **CC-BY-SA-4.0**, inherited from Wittkuhn & Schuck 2021.
