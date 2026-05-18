@@ -2,7 +2,7 @@
 
 FASTIMAGES - a benchmark for sequence replay detection methods in human neuroimaging using MEG and fMRI recordings. 
 
-<video src="https://github.com/user-attachments/assets/b7301d15-ccd7-4406-918b-016d4c8b6894" controls="controls" width="400">
+<video src="https://github.com/user-attachments/assets/b7301d15-ccd7-4406-918b-016d4c8b6894" controls="controls" width="200">
 </video>
 
 ### Overview
