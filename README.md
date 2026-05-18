@@ -21,8 +21,9 @@ If you just want to test your sequence-detection algorithm against real neural s
 ```bash
 git clone https://github.com/CIMH-Clinical-Psychology/FASTIMAGES-benchmark
 cd FASTIMAGES-benchmark
-pip install h5py numpy pandas matplotlib seaborn      # core deps
-pip install tdlm soda                                 # only if you run the TDLM/SODA example
+pip install h5py numpy pandas matplotlib seaborn  # core deps
+pip install tdlm-python  # only if you run the TDLM example
+pip install git+https://github.com/skjerns/SODA-Python/  # only if you run the SODA example
 ```
 
 Then look at the two stand-alone scripts in [`examples/`](examples/):
