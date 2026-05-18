@@ -2,8 +2,6 @@
 
 FASTIMAGES - a benchmark for sequence replay detection methods in human neuroimaging using MEG and fMRI recordings. 
 
-<video src="https://github.com/user-attachments/assets/b7301d15-ccd7-4406-918b-016d4c8b6894" controls="controls" width="200">
-</video>
 
 ### Overview
 
@@ -14,6 +12,10 @@ The repository contains two things:
 1) Probability time series and examples for benchmarking sequence detection algorithms (/examples and /sequence_predictions)
 
 2) All code to reproduce the publication "FASTIMAGES: Validating replay detection methods in human neuroimaging using a combined MEG and fMRI dataset" (/code)
+
+
+<video src="https://github.com/user-attachments/assets/b7301d15-ccd7-4406-918b-016d4c8b6894" controls="controls" width="200">
+</video>
 
 ## Quickstart
 
