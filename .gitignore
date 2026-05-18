@@ -6,6 +6,8 @@ MFR-log/*
 __pycache__/
 *.py[cod]
 *$py.class
+documents/
+plots_old/
 
 # C extensions
 *.so

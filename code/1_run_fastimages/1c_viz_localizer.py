@@ -27,6 +27,7 @@ from joblib import Memory
 from tqdm import tqdm
 from meg_utils import plotting, sigproc
 import bids_utils
+from scipy.stats import ttest_1samp, ttest_ind
 from bids_utils import load_decoding_3T
 from bids import BIDSLayout
 from mne_bids import BIDSPath
@@ -75,8 +76,10 @@ for subject in tqdm(subjects_meg, desc='Loading MEG data'):
 
     # Find best C value for this subject and filter
     best_C = df_acc_subj.loc[df_acc_subj.accuracy.idxmax(), 'C']
-    df_proba_subj = df_proba_subj[df_proba_subj.C == best_C]
+    df_proba_subj = df_proba_subj[df_proba_subj.C == best_C].copy()
     df_acc_subj = df_acc_subj[df_acc_subj.C == best_C].copy()
+    df_proba_subj['subject'] = subject
+    df_acc_subj['subject'] = subject
 
     # Convert class indices to class names
     df_proba_subj['stim'] = df_proba_subj['trial_label'].map(settings.img_trigger)
@@ -122,6 +125,42 @@ for subject in tqdm(subjects_fmri, desc='Loading fMRI data'):
 
     df_fmri_acc = pd.concat([df_fmri_acc, df_mean], ignore_index=True)
 
+#%% statistics
+df_fmri_mean = df_fmri_acc.groupby(['tr_onset']).mean(True).reset_index()
+df_meg_mean = df_meg_acc.groupby(['timepoint']).mean(True).reset_index()
+
+max_t_fmri = df_fmri_mean.tr_onset[df_fmri_mean.accuracy.argmax()]
+max_t_meg = df_meg_mean.timepoint[df_meg_mean.accuracy.argmax()]
+
+df_fmri_peak = df_fmri_acc[df_fmri_acc.tr_onset==max_t_fmri]
+df_meg_peak = df_meg_acc[df_meg_acc.timepoint==max_t_meg]
+
+t_fmri = ttest_1samp(df_fmri_peak.accuracy, popmean=0.2)
+t_meg = ttest_1samp(df_meg_peak.accuracy, popmean=0.2)
+t_diff = ttest_ind(df_fmri_peak.accuracy, df_meg_peak.accuracy)
+
+def _stars(p):
+    return '***' if p < 0.001 else '**' if p < 0.01 else '*' if p < 0.05 else 'ns'
+
+print('=' * 70)
+print('Localizer peak decoding accuracy — statistics')
+print('=' * 70)
+print(f'{"":<12}{"peak time":>12}{"n":>6}{"mean":>10}{"std":>8}{"t":>10}{"p":>12}')
+print('-' * 70)
+print(f'{"fMRI":<12}{max_t_fmri:>10.2f} s{len(df_fmri_peak):>6d}'
+      f'{df_fmri_peak.accuracy.mean():>10.3f}{df_fmri_peak.accuracy.std():>8.3f}'
+      f'{t_fmri.statistic:>10.2f}{t_fmri.pvalue:>10.3e} {_stars(t_fmri.pvalue)}')
+print(f'{"MEG":<12}{max_t_meg:>9.0f} ms{len(df_meg_peak):>6d}'
+      f'{df_meg_peak.accuracy.mean():>10.3f}{df_meg_peak.accuracy.std():>8.3f}'
+      f'{t_meg.statistic:>10.2f}{t_meg.pvalue:>10.3e} {_stars(t_meg.pvalue)}')
+print('-' * 70)
+print(f'One-sample t-test vs chance (0.2):')
+print(f'  fMRI: t({len(df_fmri_peak)-1}) = {t_fmri.statistic:+.2f},  p = {t_fmri.pvalue:.3e}  {_stars(t_fmri.pvalue)}')
+print(f'  MEG : t({len(df_meg_peak)-1}) = {t_meg.statistic:+.2f},  p = {t_meg.pvalue:.3e}  {_stars(t_meg.pvalue)}')
+print()
+print(f'Independent t-test (fMRI vs MEG peak accuracy):')
+print(f'  t({len(df_fmri_peak)+len(df_meg_peak)-2}) = {t_diff.statistic:+.2f},  p = {t_diff.pvalue:.3e}  {_stars(t_diff.pvalue)}')
+print('=' * 70)
 
 #%% Accuracy - MEG/fMRI combined
 # Use pre-loaded df_fmri_acc and df_meg_acc
@@ -179,59 +218,30 @@ sns.lineplot(df_proba_mean, x='tr_onset',  y='probability', hue='label', ax=ax)
 ax.set(title='mean', ylabel='probability', xlabel='seconds after stim onset', xlim=[-0.6, 8])
 
 plotting.normalize_lims(list(axs.flat))
-plotting.savefig(fig, settings.plot_dir + f'/figures/localizer_3T_probabilities.png')
+plotting.savefig(fig, settings.plot_dir + f'/supplement/localizer_3T_probabilities.png')
 
-asd
-#%% fast trials: probability (fMRI)
-df = pd.DataFrame()
-for subject in tqdm(subjects_fmri):
-    # read file
-    df_proba = bids_utils.load_decoding_seq_3T(subject, test_set='test-seq_long',
-                                               classifier='log_reg')
-    df_seq = bids_utils.load_trial_data_3T(subject, condition='sequence')
+#%% FIGURE: slow trial class probability (MEG)
+df_proba = df_meg_proba.copy()
+df_proba['time'] = df_proba['timepoint'] / 1000  # convert ms → seconds
 
-    tmp = []
-    for i, df_trial in df_proba.groupby('trial'):
-        order = df_seq.loc[i-1].stim_label.tolist()
-        df_trial['serial_position'] = df_trial['class'].apply(lambda x: order.index(x)+1)
-        tmp += [df_trial]
-    df_proba = pd.concat(tmp)
-    df_proba.tr_onset = df_proba.tr_onset.round(decimals=1)
-    df_proba['subject'] = subject
+fig, axs = plt.subplots(2, 3, figsize=[14, 6])
+sns.despine(fig)
 
-    # round real wall time after stim onset of TR
-    df = pd.concat([df, df_proba], ignore_index=True)
+tmin, tmax = df_proba['time'].min(), df_proba['time'].max()
 
-    fig, axs = plt.subplots(1, 5, figsize=[20, 4], sharey=True)
-    for i, (iti, df_iti) in enumerate(df_proba.groupby('tITI')):
-        ax = axs[i]
-        plot = sns.lineplot(df_iti, x='tr_onset', y='probability', hue='serial_position',
-                     palette=settings.palette_wittkuhn1,
-                     ax=ax, legend=False)
-        ax.set_xticks(np.arange(1, 14, 2))
-        ax.set_xlabel('ms after stim onset')
-        ax.set_title(f'{int((float(iti)*1000))} ms')
-        ax.hlines(0.2, 1, 7, color='black', alpha=0.5, linestyle='--')
-    fig.suptitle(f'probabilities aligned to TR walltime after seq start {subject=}')
-    fig.legend('1_2_3_4_5', title='Ser. Pos', ncols=5, fontsize=10)
-    plotting.normalize_lims(axs)
-    sns.despine()
-    plotting.savefig(fig, settings.plot_dir + f'/tr_onset/sequence_{subject}.png')
-    plt.close(fig)
+for stim_idx, stim_name in enumerate(settings.trigger_translation.values()):
+    ax = axs.flat[stim_idx]
+    ax.hlines(0.2, tmin, tmax, color='gray', linestyle='--')
+    df_sel = df_proba[df_proba.stim==stim_name].sort_values('label', ascending=False, key=lambda x:x=='other')
+    sns.lineplot(df_sel, x='time', y='probability', hue='label', ax=ax)
+    ax.set(title=stim_name, ylabel='probability', xlabel='seconds after stim onset', xlim=[tmin, tmax])
+    plt.pause(0.1)
 
-fig, axs = plt.subplots(1, 5, figsize=[20, 4], sharey=True)
-for i, (iti, df_iti) in enumerate(df.groupby('tITI')):
-    ax = axs[i]
-    plot = sns.lineplot(df_iti, x='tr_onset', y='probability', hue='serial_position',
-                 palette=settings.palette_wittkuhn1,
-                 ax=ax, legend=False)
-    ax.set_xticks(np.arange(1, 14, 2))
-    ax.set_xlabel('ms after stim onset')
-    ax.set_title(f'{int((float(iti)*1000))} ms')
-    ax.hlines(0.2, 1, 7, color='black', alpha=0.5, linestyle='--')
-fig.legend('1_2_3_4_5', title='Ser. Pos', ncols=5, fontsize=10)
+ax = axs.flat[-1]
+df_proba_mean = df_proba.groupby(['time', 'label', 'subject']).mean(True).reset_index()
+ax.hlines(0.2, tmin, tmax, color='gray', linestyle='--')
+sns.lineplot(df_proba_mean, x='time', y='probability', hue='label', ax=ax)
+ax.set(title='mean', ylabel='probability', xlabel='seconds after stim onset', xlim=[tmin, tmax])
 
-fig.suptitle(f'probabilities aligned to TR walltime after seq start n={len(subjects_fmri)}')
-plotting.normalize_lims(axs)
-sns.despine()
-plotting.savefig(fig, settings.plot_dir + f'/tr_onset/sequence_all.png')
+plotting.normalize_lims(list(axs.flat))
+plotting.savefig(fig, settings.plot_dir + f'/supplement/localizer_MEG_probabilities.png')

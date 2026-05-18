@@ -104,7 +104,6 @@ joblib.dump(df_slopes, pkl_slopes)
 df_mean = df_slopes.groupby(['tr', 'interval', 'subject']).mean(True).reset_index()
 intervals_plot = [iv for iv in intervals if iv != 2048]
 
-Stop
 #%% overview of mean slopes across intervals
 df_slopes = joblib.load(pkl_slopes)
 df_mean = df_slopes.groupby(['tr', 'interval', 'subject']).mean(True).reset_index()
@@ -500,395 +499,67 @@ fig.suptitle('Decoding accuracy vs slope per speed condition')
 fig.tight_layout()
 savefig(fig, settings.plot_dir + '/supplement/soda_correlations_dec_per_interval.png')
 
-#%% supplement: inter-interval: subject consistency across ISI conditions
-
-# build [n_subj, n_intervals] matrix of peak slopes
-peak_cols = []
-for iv in intervals:
-    df_sel = df_mean[df_mean.interval == iv]
-    slopes = misc.long_df_to_array(df_sel, 'slope', columns=['subject', 'tr'])
-    tr_onset = settings.exp_tr[iv]['onset']
-    peak_cols.append(slopes[:, tr_onset[0]-1:tr_onset[1]].mean(-1))
-peak_matrix = np.column_stack(peak_cols)  # [n_subj, n_intervals]
-
-corr_r = np.zeros((n_iv, n_iv))
-corr_p = np.zeros((n_iv, n_iv))
-for a in range(n_iv):
-    for b in range(n_iv):
-        mask = ~(np.isnan(peak_matrix[:, a]) | np.isnan(peak_matrix[:, b]))
-        if mask.sum() > 2:
-            r, p = pearsonr(peak_matrix[mask, a], peak_matrix[mask, b])
-        else:
-            r, p = np.nan, np.nan
-        corr_r[a, b] = r
-        corr_p[a, b] = p
-
-df_corr = pd.DataFrame(corr_r,
-                       index=[f'{settings.format_interval(iv)} ms' for iv in intervals],
-                       columns=[f'{settings.format_interval(iv)} ms' for iv in intervals])
-
-fig, axs = plt.subplots(1, 2, figsize=[12, 4])
-
-ax = axs[0]
-mask_tri = np.zeros_like(corr_r, dtype=bool)
-mask_tri[np.triu_indices_from(mask_tri)] = True
-sns.heatmap(df_corr, annot=False, cmap='RdBu_r', center=0, vmin=-1, vmax=1,
-            mask=mask_tri, square=True, linewidths=0.5, ax=ax)
-for a in range(n_iv):
-    for b in range(n_iv):
-        if a > b:
-            stars = ('***' if corr_p[a, b] < 0.001 else
-                     '**'  if corr_p[a, b] < 0.01  else
-                     '*'   if corr_p[a, b] < 0.05  else '')
-            ax.text(b + 0.5, a + 0.5, f'r={corr_r[a, b]:.2f}\n{stars}',
-                    ha='center', va='center', fontsize=9)
-ax.set(title='Inter-interval correlation (peak slope per subject)')
-
-ax = axs[1]
-ax.axis('off')
-inner_fig, inner_axs = plt.subplots(n_iv, n_iv, figsize=[10, 10])
-for a in range(n_iv):
-    for b in range(n_iv):
-        iax = inner_axs[a, b]
-        if a == b:
-            iax.hist(peak_matrix[:, a], bins=10, color='steelblue', edgecolor='white')
-            iax.set_title(f'{settings.format_interval(intervals[a])} ms', fontsize=8)
-        elif a > b:
-            mask = ~(np.isnan(peak_matrix[:, b]) | np.isnan(peak_matrix[:, a]))
-            r, p = pearsonr(peak_matrix[mask, b], peak_matrix[mask, a])
-            iax.scatter(peak_matrix[mask, b], peak_matrix[mask, a],
-                        s=15, alpha=0.7, color='steelblue')
-            m, c = np.polyfit(peak_matrix[mask, b], peak_matrix[mask, a], 1)
-            xs = np.linspace(peak_matrix[mask, b].min(), peak_matrix[mask, b].max(), 50)
-            iax.plot(xs, m * xs + c, c='red', alpha=0.7, linewidth=1)
-            stars = ('***' if p < 0.001 else '**' if p < 0.01 else
-                     '*' if p < 0.05 else '')
-            iax.set_title(f'r={r:.2f}{stars}', fontsize=7,
-                          color='darkred' if p < 0.05 else 'black')
-        else:
-            iax.axis('off')
-        iax.set_xticks([])
-        iax.set_yticks([])
-
-inner_fig.suptitle('Pairwise subject slopes across ISI conditions')
-inner_fig.tight_layout()
-savefig(inner_fig, settings.plot_dir + '/figures/soda_inter_interval_scatter.png')
-savefig(fig, settings.plot_dir + '/figures/soda_inter_interval_corr.png')
-
-
-#%% supplement: temporal drift: slopes vs trial position
-
-df_drift = pd.DataFrame()
-
-for interval in intervals:
-    tr_onset = settings.exp_tr[interval]['onset']
-    lo, hi = tr_onset[0] - 1, tr_onset[1]
-
-    for s_idx, subject in enumerate(subjects):
-        df_s = df_slopes[(df_slopes.interval == interval) & (df_slopes.subject == subject)]
-        trial_slopes = np.array([g.sort_values('tr')['slope'].values for _, g in df_s.groupby('trial')])
-        peak_slope = trial_slopes[:, lo:hi].mean(-1) if len(trial_slopes) > 0 else np.array([])
-        n_trials = len(peak_slope)
-        df_tmp = pd.DataFrame({
-            'slope': peak_slope,
-            'trial_position': np.arange(n_trials) / max(n_trials - 1, 1),
-            'trial_index': np.arange(n_trials),
-            'subject': subject,
-            'interval': interval,
-        })
-        df_drift = pd.concat([df_drift, df_tmp], ignore_index=True)
-
-fig, axs = plt.subplots(1, n_iv, figsize=[4 * n_iv, 4], sharey=True)
-
-for i, interval in enumerate(intervals):
-    df_sel = df_drift[df_drift.interval == interval]
-    ax = axs[i]
-
-    sns.regplot(data=df_sel, x='trial_position', y='slope',
-                scatter=False, lowess=True,
-                line_kws={'color': 'black', 'linewidth': 2}, ax=ax)
-
-    for subj in subjects:
-        df_s = df_sel[df_sel.subject == subj]
-        if len(df_s) < 3:
-            continue
-        sns.regplot(data=df_s, x='trial_position', y='slope',
-                    scatter=False, lowess=True, truncate=True,
-                    line_kws={'color': 'steelblue', 'linewidth': 0.7, 'alpha': 0.3}, ax=ax)
-
-    mask = df_sel[['trial_position', 'slope']].notna().all(axis=1)
-    r, p = pearsonr(df_sel.loc[mask, 'trial_position'], df_sel.loc[mask, 'slope'])
-    ax.text(0.05, 0.97, f'r={r:.2f}, p={p:.3f}', transform=ax.transAxes,
-            va='top', ha='left', fontsize=9)
-    ax.axhline(0, linestyle='--', c='black', alpha=0.4)
-    ax.set(title=f'{settings.format_interval(interval)} ms', xlabel='trial position (normalised)', ylabel='peak slope')
-
-sns.despine()
-fig.suptitle('Temporal drift: slopes across trial position (blue=individual, black=group)')
-savefig(fig, settings.plot_dir + '/figures/soda_temporal_drift.png')
-
-
 #%% supplement: trial-level: slopes vs reaction time
 
 df_responses = bids_utils.load_responses_sequence_3T(subjects)
 
 df_rt = pd.DataFrame()
 
-for interval in intervals:
-    tr_onset = settings.exp_tr[interval]['onset']
-    lo, hi = tr_onset[0] - 1, tr_onset[1]
+for interval in intervals[:-1]:
+    for period in ['onset', 'offset']:
+        tr_range = settings.exp_tr[interval][period]
+        lo, hi = tr_range[0] - 1, tr_range[1]
 
-    for s_idx, subject in enumerate(subjects):
-        df_s = df_slopes[(df_slopes.interval == interval) & (df_slopes.subject == subject)]
-        trial_slopes = np.array([g.sort_values('tr')['slope'].values for _, g in df_s.groupby('trial')])
-        peak_slope = trial_slopes[:, lo:hi].mean(-1) if len(trial_slopes) > 0 else np.array([])
+        for s_idx, subject in enumerate(subjects):
+            df_s = df_slopes[(df_slopes.interval == interval) & (df_slopes.subject == subject)]
+            trial_slopes = np.array([g.sort_values('tr')['slope'].values for _, g in df_s.groupby('trial')])
+            if len(trial_slopes) == 0:
+                continue
+            peak_slope = trial_slopes[:, lo:hi].mean(-1)
 
-        df_subj = df_responses[(df_responses.subject == subject) &
-                               (df_responses.interval_time == interval)].reset_index(drop=True)
-        n_trials = min(len(df_subj), len(peak_slope))
-        rt_vals = pd.to_numeric(df_subj.duration.values[:n_trials], errors='coerce')
-        rt_vals = zscore(rt_vals, nan_policy='omit')
-        df_tmp = pd.DataFrame({
-            'slope': peak_slope[:n_trials],
-            'rt': rt_vals,
-            'correct': df_subj.accuracy.values[:n_trials].astype(bool),
-            'subject': subject,
-            'interval': interval,
-        })
-        df_rt = pd.concat([df_rt, df_tmp], ignore_index=True)
+            df_subj = df_responses[(df_responses.subject == subject) &
+                                   (df_responses.interval_time_y == interval/1000)].reset_index(drop=True)
+            n_trials = min(len(df_subj), len(peak_slope))
+            if n_trials == 0:
+                continue
+            rt_vals = pd.to_numeric(df_subj.response_time.values[:n_trials], errors='coerce')
+            rt_vals = zscore(rt_vals, nan_policy='omit')
+            df_tmp = pd.DataFrame({
+                'slope': peak_slope[:n_trials],
+                'rt': rt_vals,
+                'correct': df_subj.accuracy.values[:n_trials].astype(bool),
+                'subject': subject,
+                'interval': interval,
+                'period': period,
+            })
+            df_rt = pd.concat([df_rt, df_tmp], ignore_index=True)
 
 # only use correct trials — RT on incorrect trials reflects a different process
 df_rt_correct = df_rt[df_rt.correct]
 
-fig, axs = plt.subplots(1, n_iv, figsize=[4 * n_iv, 4])
+n_iv = 4
+fig, axs = plt.subplots(2, n_iv, figsize=[4 * n_iv, 8], sharey='row')
 
-for i, interval in enumerate(intervals):
-    df_sel = df_rt_correct[df_rt_correct.interval == interval].dropna(subset=['rt'])
-    ax = axs[i]
+for j, period in enumerate(['onset', 'offset']):
+    for i, interval in enumerate(intervals[:-1]):
+        df_sel = df_rt_correct[(df_rt_correct.interval == interval) &
+                               (df_rt_correct.period == period)].dropna(subset=['rt'])
+        ax = axs[j, i]
 
-    sns.regplot(data=df_sel, x='rt', y='slope',
-                scatter_kws={'color': 'steelblue', 'alpha': 0.3, 's': 10},
-                line_kws={'color': 'red', 'alpha': 0.8}, ax=ax)
+        sns.regplot(data=df_sel, x='rt', y='slope',
+                    scatter_kws={'color': 'steelblue', 'alpha': 0.3, 's': 10},
+                    line_kws={'color': 'red', 'alpha': 0.8}, ax=ax)
 
-    if len(df_sel) > 2:
-        r, p = pearsonr(df_sel['rt'], df_sel['slope'])
-        ax.text(0.05, 0.97, f'r={r:.2f}, p={p:.3f}', transform=ax.transAxes,
-                va='top', ha='left', fontsize=9)
-    ax.axhline(0, linestyle='--', c='black', alpha=0.4)
-    ax.set(title=f'{settings.format_interval(interval)} ms', xlabel='reaction time (z-scored)', ylabel='peak slope')
+        if len(df_sel) > 2:
+            r, p = pearsonr(df_sel['rt'], df_sel['slope'])
+            ax.text(0.05, 0.97, f'r={r:.2f}, p={p:.3f}', transform=ax.transAxes,
+                    va='top', ha='left', fontsize=12)
+        ax.axhline(0, linestyle='--', c='black', alpha=0.4)
+        ax.set_title(f'{settings.format_interval(interval)} ms' if j == 0 else '')
+        ax.set_ylabel(f'{period}\nmean slope' if i == 0 else '')
+        ax.set_xlabel('reaction time (z-scored)' if j == 1 else '')
 
 sns.despine()
 fig.suptitle('Slopes vs reaction time (correct trials only)')
-savefig(fig, settings.plot_dir + '/figures/soda_vs_rt.png')
-
-#%% effect size visualization at expected TRs
-
-import pingouin as pg
-
-df_eff = pd.DataFrame()
-
-for interval in intervals:
-    df_sel = df_mean[df_mean.interval == interval]
-    slopes = misc.long_df_to_array(df_sel, 'slope', columns=['subject', 'tr'])
-
-    for period in ['onset', 'offset']:
-        tr_range = settings.exp_tr[interval][period]
-        lo, hi = tr_range[0] - 1, tr_range[1]
-        slope_sign = -1 if period == 'offset' else 1
-
-        slopes_peak = slopes[:, lo:hi].mean(-1) * slope_sign  # [n_subj]
-        n = len(slopes_peak)
-        d = pg.compute_effsize(slopes_peak, y=0)
-        ci_lo, ci_hi = pg.compute_esci(d, nx=n, ny=n, paired=True)
-        df_tmp = pd.DataFrame({'interval': interval,
-                               'cohens d': d,
-                               'ci_lo': ci_lo,
-                               'ci_hi': ci_hi,
-                               'period': period}, index=[0])
-        df_eff = pd.concat([df_eff, df_tmp])
-
-fig, axs = plt.subplots(1, 2, figsize=[10, 4])
-
-for j, period in enumerate(['onset', 'offset']):
-    ax = axs[j]
-    df_sel = df_eff[df_eff.period == period].reset_index(drop=True)
-    x_pos = np.arange(len(df_sel))
-    ax.bar(x_pos, df_sel['cohens d'].values,
-           yerr=[df_sel['cohens d'].values - df_sel['ci_lo'].values,
-                 df_sel['ci_hi'].values - df_sel['cohens d'].values],
-           capsize=4, color=[settings.palette_wittkuhn2[i] for i in range(len(df_sel))],
-           edgecolor='black', linewidth=0.5)
-    ax.set_xticks(x_pos)
-    ax.set_xticklabels([settings.format_interval(iv) for iv in df_sel['interval'].values])
-    ax.set_xlabel('interval (ms)')
-    ax.set_ylabel("Cohen's d")
-    ax.set_title(f"Group mean effect size ({period}, Cohen's d with 95% CI)")
-    ax.axhline(0, linestyle='--', alpha=0.5, c='black')
-
-plotting.normalize_lims(axs)
-savefig(fig, settings.plot_dir + '/figures/soda_effect_sizes.png')
-
-#%% supplement: correlate with behaviour and slope
-
-df_responses = bids_utils.load_responses_sequence_3T(subjects)
-
-fig, axs = plt.subplots(1, n_iv, figsize=[4 * n_iv, 4])
-
-for i, interval in enumerate(intervals[:-1]):
-    tr_onset = settings.exp_tr[interval]['onset']
-    lo, hi = tr_onset[0] - 1, tr_onset[1]
-    df_sel = df_mean[df_mean.interval == interval]
-    slopes = misc.long_df_to_array(df_sel, 'slope', columns=['subject', 'tr'])
-    mean_slope = slopes[:, lo:hi].mean(-1)  # [n_subj]
-
-    beh_acc = np.array([
-        df_responses[(df_responses.subject == s) &
-                     (df_responses.interval_time_y == interval/1000)].accuracy.mean()
-        for s in subjects
-    ])
-
-    ax = axs.flat[i]
-    mask = ~np.isnan(beh_acc) & ~np.isnan(mean_slope)
-    df_beh = pd.DataFrame({'behavioral accuracy': beh_acc, 'mean slope': mean_slope})
-    r, p = pearsonr(beh_acc[mask], mean_slope[mask])
-    sns.regplot(data=df_beh[mask], x='behavioral accuracy', y='mean slope',
-                color=sns.color_palette()[1], scatter_kws={'alpha': 0.7},
-                line_kws={'alpha': 0.7}, ax=ax)
-    ax.text(0.5, 0.95, f'r={r:.2f}, p={p:.3f}', transform=ax.transAxes,
-            va='top', ha='center', fontsize=12)
-    ax.set(title=f'{settings.format_interval(interval)} ms')
-
-fig.suptitle('Slopes correlations with behavioral accuracy')
-savefig(fig, settings.plot_dir + '/figures/soda_correlations.png')
-
-
-#%% DEPRECATED participant-level: p values across trials
-# plot p values per participant
-pkl_pval = str(bids_base.copy().update(processing='soda', suffix='pvalues', extension='.pkl.gz'))
-
-df_pval = pd.DataFrame()
-
-for (interval, subj, period), df_sel in tqdm(list(df_slopes.groupby(['interval', 'subject', 'period'])),
-                                             'calculating p values'):
-    slopes = misc.long_df_to_array(df_sel, 'slope', ['trial', 'tr'])
-    # flip sign if offset so we test in same direction
-    slopes = slopes * (-1 if period=='offset' else 1)
-    t_obs, p, t_perms = permutation_t_test(slopes, tail=1, seed=int(subj), verbose=0)
-    df_cond = pd.DataFrame({'subject': subj,
-                            'period': period,
-                            'interval': interval,
-                            'p-value': min(p)}, index=[0])
-    df_pval = pd.concat([df_pval, df_cond], ignore_index=True)
-
-joblib.dump(df_pval, pkl_pval)
-
-fig, axs = plt.subplots(2, 5, figsize=[16, 10], sharex=True)
-fig.suptitle('Significant slopes for individual participants\' trials')
-
-for i, ((period, interval), df_sel) in enumerate(df_pval.groupby(['period', 'interval'])):
-    ax = axs.flat[i]
-    plotting.tornadoplot(df_sel, x='p-value', y='subject', center=0,
-                         low_label='p < 0', high_label='p > 0',
-                         sort=True, ax=ax)
-    ax.axvline(0.05, linestyle='--', c='darkred', linewidth=1.5, label='p=0.05')
-    pct = (df_sel['p-value'] < 0.05).mean() * 100
-    ax.set_title(f'{interval}\n{pct:.0f}% significant')
-    ax.set_xlabel('p-value')
-
-    if i == 0:
-        ax.set_ylabel('subject')
-    else:
-        ax.set_ylabel('')
-
-sns.despine()
-savefig(fig, settings.plot_dir + '/figures/soda_participant_pvalues.png')
-
-
-#%% DEPRECATED heatmap for trials of selected participants
-# np.random.seed(0)
-# subjects_rnd = sorted(np.random.choice(subjects, 6, replace=False))
-
-# fig, axs = plt.subplots(2, 3, figsize=[12, 8])
-# axs.flat[-1].axis('off')
-
-# df_sel = df_slopes[(df_slopes.interval == 0.512) & df_slopes.subject.isin(subjects_rnd)]
-
-# for i, (subject, df_subj) in enumerate(df_sel.groupby('subject')):
-
-#     slopes = [x.slope.values for _, x in df_subj.sort_values(['tr', 'trial']).groupby('trial')]
-#     slopes = np.squeeze(slopes)
-
-#     ax = axs.flat[i]
-#     ax.clear()
-#     sns.heatmap(pd.DataFrame(slopes, columns=np.arange(1, 14), index=np.arange(1, 16)),
-#                 cmap='RdBu_r', ax=ax)
-#     ax.set(ylabel='trial', xlabel='tr', title=f'{subject}')
-
-#     ax.set_xticks(np.arange(13), np.arange(1, 14))
-
-# plotting.normalize_lims(axs, which='v')
-
-# fig.suptitle('Slopes of all trials for selected participants')
-# savefig(fig, settings.plot_dir + '/figures/slopes_heatmap_trials.png')
-
-#%% DEPRECATED trial-level: slopes ~ trial response
-n_iv=4
-
-df_responses = bids_utils.load_responses_sequence_3T(subjects)
-
-df_trial_resp = pd.DataFrame()
-
-for interval in intervals[:-1]:
-    tr_onset = settings.exp_tr[interval]['onset']
-    lo, hi = tr_onset[0] - 1, tr_onset[1]
-
-    for s_idx, subject in enumerate(subjects):
-        df_s = df_slopes[(df_slopes.interval == interval) & (df_slopes.subject == subject)]
-        trial_slopes = np.array([g.sort_values('tr')['slope'].values for _, g in df_s.groupby('trial')])
-        peak_slope = trial_slopes[:, lo:hi].mean(-1) if len(trial_slopes) > 0 else np.array([])
-
-        df_subj = df_responses[(df_responses.subject == subject) &
-                               (df_responses.interval_time == interval)].reset_index(drop=True)
-        n_trials = min(len(df_subj), len(peak_slope))
-        df_tmp = pd.DataFrame({
-            'slope': peak_slope[:n_trials],
-            'correct': df_subj.accuracy.values[:n_trials].astype(bool),
-            'subject': subject,
-            'interval': interval,
-        })
-        df_trial_resp = pd.concat([df_trial_resp, df_tmp], ignore_index=True)
-
-df_trial_resp['response'] = df_trial_resp['correct'].map({True: 'correct', False: 'incorrect'})
-
-fig, axs = plt.subplots(1, n_iv, figsize=[4 * n_iv, 4], sharey=True)
-
-for i, interval in enumerate(intervals[:-1]):
-    df_sel = df_trial_resp[df_trial_resp.interval == interval]
-    assert len(df_sel)
-    ax = axs[i]
-
-    sns.violinplot(data=df_sel, x='response', y='slope', hue='response',
-                   palette={'correct': 'seagreen', 'incorrect': 'crimson'},
-                   order=['correct', 'incorrect'], inner='quart',
-                   legend=False, ax=ax)
-
-    df_subj_mean = df_sel.groupby(['subject', 'response'])['slope'].mean().reset_index()
-    sns.stripplot(data=df_subj_mean, x='response', y='slope',
-                  order=['correct', 'incorrect'],
-                  color='black', alpha=0.5, size=4, jitter=True, ax=ax)
-
-    for subj in df_subj_mean.subject.unique():
-        vals = df_subj_mean[df_subj_mean.subject == subj].set_index('response')['slope']
-        if 'correct' in vals and 'incorrect' in vals:
-            ax.plot([0, 1], [vals['correct'], vals['incorrect']],
-                    c='black', alpha=0.2, linewidth=0.8)
-
-    r, p = pearsonr(df_sel['correct'].astype(int), df_sel['slope'])
-    ax.text(0.5, 0.98, f'r={r:.2f}, p={p:.3f}', transform=ax.transAxes,
-            va='top', ha='center', fontsize=9)
-    ax.axhline(0, linestyle='--', c='black', alpha=0.4)
-    ax.set(title=f'{settings.format_interval(interval)} ms', xlabel='')
-
-sns.despine()
-fig.suptitle('Trial slope at expected TR: correct vs incorrect responses')
-savefig(fig, settings.plot_dir + '/figures/soda_vs_response.png')
+fig.tight_layout()
+savefig(fig, settings.plot_dir + '/supplement/soda_vs_rt.png')
