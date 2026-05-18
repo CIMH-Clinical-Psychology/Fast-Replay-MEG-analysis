@@ -93,31 +93,38 @@ The steps below regenerate the figures and the published probabilities from raw 
 
 ### Run the analysis
 
-The analysis is two phases, run in order from inside the relevant subfolder.
+The analysis is two phases, run in order from inside the relevant subfolder. Scripts named `*_viz_*` produce the figures for the script with the matching prefix; they read the saved results and can be re-run on their own.
 
-**Phase 1 — train decoders and apply them to the fast-sequence MEG trials** (`code/1_run_fastimages/`):
+**Phase 1 — train MEG decoders and apply them to the fast-sequence trials** (`code/1_run_fastimages/`):
 
 ```bash
 python 1a_run_best_l1_meg.py             # L1 gridsearch on localizer trials
-python 1c_train_localizer_meg.py         # train final classifiers with best L1
+python 1a_viz_best_l1_meg.py             # plot the L1 gridsearch
+python 1b_classifier_generalization.py   # temporal generalization matrices (TGMs)
+python 1b_viz_classifier_generalization.py
+python 1c_train_localizer_meg.py         # train final classifiers with best L1/timepoint
+python 1c_viz_localizer.py               # MEG vs fMRI localizer decoding figure
 python 2_run_analysis_fast_images.py     # aggregate MEG accuracies vs fMRI
+python 3_run_visualize_sequences.py      # per-position probability traces
 ```
 
-**Phase 2 — run TDLM/SODA on both modalities and compare** (`code/2_run_comparison/`):
+**Phase 2 — run TDLM / SODA on both modalities and compare** (`code/2_run_comparison/`):
 
 ```bash
 python ../scripts/0_extract_trial_probas.py   # (re)build sequence_predictions/*.h5
+
 python 1a_run_tdlm_meg.py                     # TDLM on MEG
+python 1a_suppl_2-step-tdlm.py                # supplementary: 2-step TDLM
 python 1b_run_soda_fmri.py                    # SODA on fMRI
+
+python 2a_run_soda_meg.py                     # SODA on MEG (cross-method)
 python 2b_run_tdlm_fmri.py                    # TDLM on fMRI (cross-method)
+python 2c_run_decoder_extension.py            # decoder extension experiments
+
 python 4_compare_tdlm_soda.py                 # side-by-side effect-size comparison
 ```
 
-For the power analyses (3a_*/3b_*), submit the SLURM array jobs:
-
-```bash
-bash 3_submit_power_analysis.sh
-```
+**Power analyses** (`code/2_run_comparison/3a_*`, `3b_*`): these are heavier and need to be **run separately**, typically as SLURM array jobs — see `3_submit_power_analysis.sh`. Each method (TDLM / SODA) has three statistical-test variants (`signflip`, `cluster`, `ttest`) plus a corresponding `*_plot.py` to render the curves.
 
 ## Preprocessing
 
