@@ -75,6 +75,8 @@ The steps below regenerate the figures and the published probabilities from raw 
 
    ```bash
    gin get skjerns/FASTIMAGES-MEG-bids
+   cd FASTIMAGES-MEG-bids
+   gin get-content
    ```
 
    See the [FASTIMAGES-MEG-bids README](https://gin.g-node.org/skjerns/FASTIMAGES-MEG-bids) for alternatives (DataLad, selective download) and for re-running the preprocessing.
@@ -82,7 +84,7 @@ The steps below regenerate the figures and the published probabilities from raw 
 4. **Download the combined 3T fMRI BIDS + decoding dataset** (`FASTIMAGES-3T-bids`):
 
    ```bash
-   gin get skjerns/FASTIMAGES-3T-bids   # TODO: replace once published
+   gin get skjerns/FASTIMAGES-3T-bids 
    ```
 
    This single tree contains the BIDS events files together with the per-subject decoding CSVs (no separate `highspeed-decoding` repo is needed any more).
