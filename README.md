@@ -67,7 +67,8 @@ The steps below regenerate the figures and the published probabilities from raw 
    If you also want to run the example scripts that depend on third-party algorithms, install them too:
 
    ```bash
-   pip install tdlm soda
+   pip install tdlm-python  # only if you run the TDLM example
+   pip install git+https://github.com/skjerns/SODA-Python/ 
    ```
 
 3. **Download the MEG BIDS dataset** (~205 GB; includes preprocessed `derivatives/`):
@@ -84,9 +85,9 @@ The steps below regenerate the figures and the published probabilities from raw 
    gin get skjerns/FASTIMAGES-3T-bids   # TODO: replace once published
    ```
 
-   This single tree contains the BIDS events/anatomy/functional files together with the per-subject decoding CSVs (no separate `highspeed-decoding` repo is needed any more).
+   This single tree contains the BIDS events files together with the per-subject decoding CSVs (no separate `highspeed-decoding` repo is needed any more).
 
-   > **Note:** `FASTIMAGES-3T-bids` is a *compressed* repackaging that drops the original 4D BOLD NIfTIs — the full analysis here only needs the events files plus the precomputed decoding probabilities, so the raw functional volumes are not shipped. If you want them (e.g. to retrain your own decoders or rerun fMRIPrep), grab the originals from Wittkuhn & Schuck 2021: [`lnnrtwttkhn/highspeed-bids`](https://gin.g-node.org/lnnrtwttkhn/highspeed-bids) for the raw BIDS data and [`lnnrtwttkhn/highspeed-decoding`](https://gin.g-node.org/lnnrtwttkhn/highspeed-decoding) for their decoding outputs.
+   > **Note:** `FASTIMAGES-3T-bids` is a *compressed* repackaging that drops the original 4D BOLD NIfTIs — the full analysis here only needs the events files plus the precomputed decoding probabilities, so the raw functional volumes are not shipped. If you want them (e.g. to retrain your own decoders or rerun fMRIPrep), grab the originals from Wittkuhn & Schuck 2021: [`lnnrtwttkhn/highspeed-bids`](https://gin.g-node.org/lnnrtwttkhn/highspeed-bids) for the raw BIDS data and [`lnnrtwttkhn/highspeed-decoding`](https://gin.g-node.org/lnnrtwttkhn/highspeed-decoding) for their decoding outputs. You'll need this to train your own decoders.
 
 5. **Configure paths.** Open `code/settings.py` and set `bids_dir_meg` and `bids_dir_3T` to wherever you put the two datasets. Per-machine branches are supported; pick one that matches your `getpass.getuser()` / `platform.node()` or add your own.
 
