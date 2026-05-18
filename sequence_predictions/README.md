@@ -17,6 +17,8 @@ order are all you need to reproduce sequence-detection analyses such as
 
 Examples for loading the data with Python, R, Julia, MATLAB are below.
 
+See also (FASTIMAGES-benchmark/examples)[https://github.com/CIMH-Clinical-Psychology/FASTIMAGES-benchmark/tree/main/examples] for example scripts
+
 ## Layout
 
 ```
