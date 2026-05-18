@@ -101,7 +101,7 @@ The analysis is two phases, run in order from inside the relevant subfolder. Scr
 python 1a_run_best_l1_meg.py             # L1 gridsearch on localizer trials
 python 1a_viz_best_l1_meg.py             # plot the L1 gridsearch
 python 1b_classifier_generalization.py   # temporal generalization matrices (TGMs)
-python 1b_viz_classifier_generalization.py
+python 1b_viz_classifier_generalization.py  # visualize the classifier generalization as heatmap
 python 1c_train_localizer_meg.py         # train final classifiers with best L1/timepoint
 python 1c_viz_localizer.py               # MEG vs fMRI localizer decoding figure
 python 2_run_analysis_fast_images.py     # aggregate MEG accuracies vs fMRI
@@ -111,21 +111,13 @@ python 3_run_visualize_sequences.py      # per-position probability traces
 **Phase 2 — run TDLM / SODA on both modalities and compare** (`code/2_run_comparison/`):
 
 ```bash
-python ../scripts/0_extract_trial_probas.py   # (re)build sequence_predictions/*.h5
-
 python 1a_run_tdlm_meg.py                     # TDLM on MEG
-python 1a_suppl_2-step-tdlm.py                # supplementary: 2-step TDLM
 python 1b_run_soda_fmri.py                    # SODA on fMRI
 
 python 2a_run_soda_meg.py                     # SODA on MEG (cross-method)
 python 2b_run_tdlm_fmri.py                    # TDLM on fMRI (cross-method)
-python 2c_run_decoder_extension.py            # decoder extension experiments
 
 python 4_compare_tdlm_soda.py                 # side-by-side effect-size comparison
 ```
 
 **Power analyses** (`code/2_run_comparison/3a_*`, `3b_*`): these are heavier and need to be **run separately**, typically as SLURM array jobs — see `3_submit_power_analysis.sh`. Each method (TDLM / SODA) has three statistical-test variants (`signflip`, `cluster`, `ttest`) plus a corresponding `*_plot.py` to render the curves.
-
-## Preprocessing
-
-Preprocessed `.fif` files are already shipped inside the MEG BIDS dataset (`/derivatives`). If you want to regenerate them yourself, the pipeline lives next to the data — see the **Preprocessing** section of the [FASTIMAGES-MEG-bids README](https://gin.g-node.org/skjerns/FASTIMAGES-MEG-bids) (`make install-preprocessing && make preprocessing`, or `make preprocessing_slurm` on a SLURM cluster).
