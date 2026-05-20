@@ -6,6 +6,7 @@ Code to run SODA (Slope Order Dynamic Analysis) on MEG data
 
 @author: Simon.Kern
 """
+import sys; sys.path.append('..')
 
 import mne
 import joblib

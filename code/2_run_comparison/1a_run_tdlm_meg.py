@@ -24,7 +24,6 @@ from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 import tdlm
 from tdlm.utils import seq2tf, num2char
 from scipy.stats import zscore, pearsonr, ttest_1samp
-import contextprofiler
 from joblib import Parallel, delayed
 from mne_bids import BIDSPath
 import joblib
@@ -437,48 +436,6 @@ savefig(fig, settings.plot_dir + '/figures/sequenceness_trial_level.png', tight=
 
 
 
-#%% mean sequenceness across conditions: correlate with decoding and behaviour
-
-mean_seq_across = np.mean(all_mean_seq, axis=0)  # [n_subj]
-
-fig, axs = plt.subplots(1, 2, figsize=[10, 4])
-
-# left: decoding accuracy vs mean sequenceness across conditions
-ax = axs[0]
-df_dec = pd.DataFrame({'decoding accuracy': dec_acc, 'mean sequenceness': mean_seq_across})
-r, p = pearsonr(dec_acc, mean_seq_across)
-sns.regplot(data=df_dec, x='decoding accuracy', y='mean sequenceness',
-            color=sns.color_palette()[0], scatter_kws={'alpha': 0.7},
-            line_kws={'alpha': 0.7}, ax=ax)
-ax.text(0.5, 0.95, f'r={r:.2f}, p={p:.3f}', transform=ax.transAxes,
-        va='top', ha='center', fontsize=12)
-ax.set_yticks(np.arange(0, 9, 1)/10, minor=True)
-ax.set_xticks(np.arange(8, 20, 2)/20)
-ax.set_xticks(np.arange(8, 20, 1)/20, minor=True)
-ax.set(title='decoding accuracy', ylabel='mean sequenceness\nat expected time lag')
-
-# right: behavioral accuracy (mean across conditions) vs mean sequenceness
-beh_acc_mean = np.array([df_responses[df_responses.subject == s[-2:]].accuracy.mean()
-                         for s in subjects])
-ax = axs[1]
-df_beh = pd.DataFrame({'behavioral accuracy': beh_acc_mean, 'mean sequenceness': mean_seq_across})
-r, p = pearsonr(beh_acc_mean, mean_seq_across)
-sns.regplot(data=df_beh, x='behavioral accuracy', y='mean sequenceness',
-            color=sns.color_palette()[1], scatter_kws={'alpha': 0.7},
-            line_kws={'alpha': 0.7}, ax=ax)
-ax.text(0.5, 0.95, f'r={r:.2f}, p={p:.3f}', transform=ax.transAxes,
-        va='top', ha='center', fontsize=12)
-ax.set_ylabel('')
-ax.set_yticks(np.arange(0, 9, 1)/10, minor=True)
-# ax.set_xticks(np.arange(16, 40, 2)/20)
-# ax.set_xticks(np.arange(8, 20, 1)/20, minor=True)
-ax.set(title='behavioural accuracy')
-
-# fig.suptitle('Mean sequenceness across conditions vs decoding and behavioral accuracy')
-fig.tight_layout()
-savefig(fig, settings.plot_dir + '/figues/sequenceness_correlations_mean.png')
-
-
 #%% trial-level: correlate with behaviour and decoding accuracy
 
 res = joblib.load(pkl_seq)
@@ -528,6 +485,48 @@ for i, (interval, sf) in enumerate(sf_mean.items()):
 
 fig.suptitle('Sequenceness correlations with decoding and behavioral accuracy')
 savefig(fig, settings.plot_dir + '/supplement/sequenceness_correlations.png')
+
+
+#%% mean sequenceness across conditions: correlate with decoding and behaviour
+
+mean_seq_across = np.mean(all_mean_seq, axis=0)  # [n_subj]
+
+fig, axs = plt.subplots(1, 2, figsize=[10, 4])
+
+# left: decoding accuracy vs mean sequenceness across conditions
+ax = axs[0]
+df_dec = pd.DataFrame({'decoding accuracy': dec_acc, 'mean sequenceness': mean_seq_across})
+r, p = pearsonr(dec_acc, mean_seq_across)
+sns.regplot(data=df_dec, x='decoding accuracy', y='mean sequenceness',
+            color=sns.color_palette()[0], scatter_kws={'alpha': 0.7},
+            line_kws={'alpha': 0.7}, ax=ax)
+ax.text(0.5, 0.95, f'r={r:.2f}, p={p:.3f}', transform=ax.transAxes,
+        va='top', ha='center', fontsize=12)
+ax.set_yticks(np.arange(0, 9, 1)/10, minor=True)
+ax.set_xticks(np.arange(8, 20, 2)/20)
+ax.set_xticks(np.arange(8, 20, 1)/20, minor=True)
+ax.set(title='decoding accuracy', ylabel='mean sequenceness\nat expected time lag')
+
+# right: behavioral accuracy (mean across conditions) vs mean sequenceness
+beh_acc_mean = np.array([df_responses[df_responses.subject == s[-2:]].accuracy.mean()
+                         for s in subjects])
+ax = axs[1]
+df_beh = pd.DataFrame({'behavioral accuracy': beh_acc_mean, 'mean sequenceness': mean_seq_across})
+r, p = pearsonr(beh_acc_mean, mean_seq_across)
+sns.regplot(data=df_beh, x='behavioral accuracy', y='mean sequenceness',
+            color=sns.color_palette()[1], scatter_kws={'alpha': 0.7},
+            line_kws={'alpha': 0.7}, ax=ax)
+ax.text(0.5, 0.95, f'r={r:.2f}, p={p:.3f}', transform=ax.transAxes,
+        va='top', ha='center', fontsize=12)
+ax.set_ylabel('')
+ax.set_yticks(np.arange(0, 9, 1)/10, minor=True)
+# ax.set_xticks(np.arange(16, 40, 2)/20)
+# ax.set_xticks(np.arange(8, 20, 1)/20, minor=True)
+ax.set(title='behavioural accuracy')
+
+# fig.suptitle('Mean sequenceness across conditions vs decoding and behavioral accuracy')
+fig.tight_layout()
+savefig(fig, settings.plot_dir + '/figues/sequenceness_correlations_mean.png')
 
 #%% supplement: trial-level: sequenceness vs reaction time
 from scipy.stats import zscore, pearsonr

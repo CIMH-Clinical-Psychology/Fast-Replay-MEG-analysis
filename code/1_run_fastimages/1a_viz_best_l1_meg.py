@@ -61,7 +61,7 @@ files_acc = deriv.get(task='main',
                  suffix='accuracy',
                  invalid_filters='allow')
 
-assert len(files_acc)==30
+assert len(files_acc) > 0, 'no L1-gridsearch accuracy files found — run 1a_run_best_l1_meg.py first'
 assert len(files_proba)==30
 
 df_acc = pd.concat([pd.read_pickle(f) for f in files_acc], ignore_index=True)
@@ -321,11 +321,16 @@ plotting.normalize_lims(axs.flat[:30])
 plotting.savefig(fig, settings.plot_dir + '/supplement/fastimages_accuracies.png')
 #%% create GIF of classifiers
 import imageio
+import warnings
 from joblib import Parallel, delayed
 from meg_utils.decoding import get_channel_importances
 # dummy load a file to plot sensors with, do not use the data which is included
-stim = imageio.imread('../data/Haus.jpg')
-fixation = imageio.imread('../data/fixation.png')
+_stim_path, _fix_path = '../data/Haus.jpg', '../data/fixation.png'
+if not (os.path.isfile(_stim_path) and os.path.isfile(_fix_path)):
+    warnings.warn(f'Stimulus images not found ({_stim_path}, {_fix_path}) — skipping GIF section.')
+    raise SystemExit(0)
+stim = imageio.imread(_stim_path)
+fixation = imageio.imread(_fix_path)
 
 plt.close('all')
 vectorview = mne.channels.read_layout('Vectorview-all')

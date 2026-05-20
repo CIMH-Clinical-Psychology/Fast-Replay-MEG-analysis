@@ -79,6 +79,12 @@ The steps below regenerate the figures and the published probabilities from raw 
    gin get-content
    ```
 
+   If you only need the preprocessed `.fif` files (e.g. to re-run the analysis without retraining the decoders), you can skip the ~200 GB of raw recordings:
+
+   ```bash
+   gin get-content derivatives/
+   ```
+
    See the [FASTIMAGES-MEG-bids README](https://gin.g-node.org/skjerns/FASTIMAGES-MEG-bids) for alternatives (DataLad, selective download) and for re-running the preprocessing.
 
 4. **Download the combined 3T fMRI BIDS + decoding dataset** ([`FASTIMAGES-3T-bids`](https://gin.g-node.org/skjerns/FASTIMAGES-3T-bids), ~550 MB):
@@ -125,6 +131,18 @@ python 4_compare_tdlm_soda.py                 # side-by-side effect-size compari
 ```
 
 **Power analyses** (`code/2_run_comparison/3a_*`, `3b_*`): these are heavier and need to be **run separately**, typically as SLURM array jobs — see `3_submit_power_analysis.sh`. Each method (TDLM / SODA) has three statistical-test variants (`signflip`, `cluster`, `ttest`) plus a corresponding `*_plot.py` to render the curves.
+
+Without a SLURM cluster you can fall back to a shell loop on a single machine:
+
+```bash
+# TDLM: 89 sample sizes × 3 stat tests × 2 modalities ≈ 3–6 h on a 16-core machine
+for ns in $(seq 2 90); do python 3a_tdlm_power_analysis_signflip.py --n_samples $ns; done
+for ns in $(seq 2 90); do python 3a_tdlm_power_analysis_cluster.py  --n_samples $ns; done
+for ns in $(seq 2 80); do python 3b_soda_power_analysis_signflip.py --n_samples $ns; done
+for ns in $(seq 2 80); do python 3b_soda_power_analysis_cluster.py  --n_samples $ns; done
+```
+
+For an interactive run you can lower `--n_draws` from the default 1000 to e.g. 200 — the contour shapes are still informative and each call drops to ~30 s.
 
 ## Preprocessing
 
